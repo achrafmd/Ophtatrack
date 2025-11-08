@@ -112,14 +112,14 @@ def append_row(sheet: str, header: list[str], row: dict):
 def voice_dictation(key: str):
     if key not in st.session_state:
         st.session_state[key] = ""
-    html = f"""
+    js = r"""
     <div>
-      <button id="start_{key}" style="padding:8px 12px;border-radius:8px;">🎙️ Démarrer/Stop</button>
-      <span id="status_{key}" style="margin-left:8px;color:#666;">Prêt</span>
+      <button id="start_{k}" style="padding:8px 12px;border-radius:8px;">🎙️ Démarrer/Stop</button>
+      <span id="status_{k}" style="margin-left:8px;color:#666;">Prêt</span>
       <script>
-        function ok(){ return ('webkitSpeechRecognition' in window) || ('SpeechRecognition' in window); }
-        const s = document.getElementById("status_{key}");
-        const b = document.getElementById("start_{key}");
+        function ok() {{ return ('webkitSpeechRecognition' in window) || ('SpeechRecognition' in window); }}
+        const s = document.getElementById("status_{k}");
+        const b = document.getElementById("start_{k}");
         if (!ok()) {{
           s.textContent = "Dictée non supportée par ce navigateur.";
         }} else {{
@@ -135,7 +135,7 @@ def voice_dictation(key: str):
             }}
             if (t) {{
               buf += t;
-              const msg = {{ type: "streamlit:setComponentValue", key: "{key}", value: buf }};
+              const msg = {{ type: "streamlit:setComponentValue", key: "{k}", value: buf }};
               window.parent.postMessage(msg, "*");
             }}
           }};
@@ -149,10 +149,9 @@ def voice_dictation(key: str):
         }}
       </script>
     </div>
-    """
-    components.html(html, height=60)
+    """.replace("{k}", key)
+    components.html(js, height=60)
     return st.session_state.get(key, "")
-
 # ── CACHE DES DONNÉES ────────────────────────────────────────────────────────
 @st.cache_data
 def load_all():
