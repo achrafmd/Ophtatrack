@@ -1,19 +1,24 @@
 # ──────────────────────────────────────────────────────────────────────────────
-# OphtaDossier — Suivi patients (API Google Sheets only)
+# OphtaDossier — Google Sheets + Google Drive (photos)
+# - Menu: 🔍 Rechercher | ➕ Ajouter | 📤 Export
+# - Photos: upload vers Google Drive (dans un dossier partagé avec le SA)
+# - Sheets: lecture/écriture via Google Sheets API (values.get/append)
+# - Dictée vocale, Appel/WhatsApp
 # ──────────────────────────────────────────────────────────────────────────────
 
-import re, base64, unicodedata, urllib.parse, uuid, io, csv, json
+import re, unicodedata, urllib.parse, uuid, io, csv, json
 from datetime import date, datetime
 import streamlit as st
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
+from googleapiclient.http import MediaIoBaseUpload
 import streamlit.components.v1 as components
 
-# 1) set_page_config = TOUT EN HAUT, AVANT TOUT AUTRE st.*
-st.set_page_config(page_title="OphtaDossier — Suivi patients", layout="wide")
+st.set_page_config(page_title="OphtaDossier — Drive Storage", layout="wide")
 
 APP_TITLE = "OphtaDossier — Suivi patients"
 S_PAT, S_MENU, S_PARAM, S_MEDIA = "Patients", "Menu", "Paramètres", "Media"
+DEFAULT_DRIVE_FOLDER_NAME = "OphtaDossier_Media"
 
 # ── STYLES ───────────────────────────────────────────────────────────────────
 st.markdown("""
@@ -25,16 +30,25 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# ── AUTH/SERVICE ─────────────────────────────────────────────────────────────
+# ── AUTH/SERVICES ────────────────────────────────────────────────────────────
 @st.cache_resource
-def _creds():
+def _creds(scopes=None):
+    if scopes is None:
+        scopes = [
+            "https://www.googleapis.com/auth/spreadsheets",
+            "https://www.googleapis.com/auth/drive.file",   # upload dans un dossier partagé
+            "https://www.googleapis.com/auth/drive.metadata.readonly"
+        ]
     sa_info = st.secrets["GCP_SERVICE_ACCOUNT"]
-    scopes = ["https://www.googleapis.com/auth/spreadsheets"]
     return Credentials.from_service_account_info(sa_info, scopes=scopes)
 
 @st.cache_resource
-def _svc():
+def _svc_sheets():
     return build("sheets", "v4", credentials=_creds(), cache_discovery=False)
+
+@st.cache_resource
+def _svc_drive():
+    return build("drive", "v3", credentials=_creds(), cache_discovery=False)
 
 def _sheet_id():
     url = st.secrets["SHEET_URL"]
@@ -63,7 +77,7 @@ def whatsapp_link(number: str, text=""):
 
 # ── SHEETS HELPERS ───────────────────────────────────────────────────────────
 def _get_range(sheet: str, rng: str="A1:ZZ100000"):
-    return _svc().spreadsheets().values().get(
+    return _svc_sheets().spreadsheets().values().get(
         spreadsheetId=_sheet_id(), range=f"{sheet}!{rng}"
     ).execute().get("values", [])
 
@@ -77,7 +91,7 @@ def read_sheet_as_dicts(sheet: str):
 def ensure_headers(sheet: str, header: list[str]):
     cur = _get_range(sheet, "A1:Z1")
     if not cur or not cur[0]:
-        _svc().spreadsheets().values().update(
+        _svc_sheets().spreadsheets().values().update(
             spreadsheetId=_sheet_id(),
             range=f"{sheet}!A1",
             valueInputOption="USER_ENTERED",
@@ -85,13 +99,49 @@ def ensure_headers(sheet: str, header: list[str]):
         ).execute()
 
 def append_row(sheet: str, header: list[str], row: dict):
-    _svc().spreadsheets().values().append(
+    _svc_sheets().spreadsheets().values().append(
         spreadsheetId=_sheet_id(),
         range=f"{sheet}!A1",
         valueInputOption="USER_ENTERED",
         insertDataOption="INSERT_ROWS",
         body={"values":[[row.get(h, "") for h in header]]}
     ).execute()
+
+# ── DRIVE HELPERS ────────────────────────────────────────────────────────────
+def _get_or_create_folder_id():
+    """Retourne le folder ID à utiliser pour stocker les photos."""
+    # 1) si on a un ID explicite dans les secrets, on l'utilise
+    folder_id = st.secrets.get("DRIVE_FOLDER_ID", "").strip()
+    if folder_id:
+        return folder_id
+
+    # 2) sinon, on tente de trouver/créer un dossier par nom dans le Drive du SA
+    name = DEFAULT_DRIVE_FOLDER_NAME
+    drive = _svc_drive()
+    q = f"name = '{name}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
+    resp = drive.files().list(q=q, spaces="drive", fields="files(id, name)", pageSize=10).execute()
+    files = resp.get("files", [])
+    if files:
+        return files[0]["id"]
+    # créer le dossier dans le Drive du SA
+    meta = {"name": name, "mimeType": "application/vnd.google-apps.folder"}
+    newf = drive.files().create(body=meta, fields="id").execute()
+    return newf["id"]
+
+def upload_image_to_drive(file, filename_hint: str, folder_id: str):
+    """Uploade un fichier image vers Drive, renvoie (file_id, webViewLink)."""
+    drive = _svc_drive()
+    media = MediaIoBaseUpload(file, mimetype="image/jpeg", resumable=False)
+    metadata = {
+        "name": filename_hint or ("photo_" + uuid.uuid4().hex[:8] + ".jpg"),
+        "parents": [folder_id],
+    }
+    created = drive.files().create(
+        body=metadata,
+        media_body=media,
+        fields="id, webViewLink"
+    ).execute()
+    return created.get("id"), created.get("webViewLink")
 
 # ── DICTÉE VOCALE (safe f-string) ────────────────────────────────────────────
 def voice_dictation(key: str):
@@ -147,7 +197,8 @@ def load_all():
         "Consentement photo (Oui/Non)","Lieu (Urgences/Consultation/Bloc)",
         "Tags","Créé le","Dernière mise à jour"
     ]
-    ensure_headers(S_MEDIA, ["MediaID","Filename","MIME","B64"])
+    # entêtes si besoin
+    ensure_headers(S_MEDIA, ["MediaID","Filename","MIME","DriveFileID","DriveLink"])
     ensure_headers(S_PAT, default_pat_header)
 
     _, patients = read_sheet_as_dicts(S_PAT)
@@ -157,7 +208,7 @@ def load_all():
     return {"patients":patients, "menu":menu, "params":params,
             "media":media, "pat_header":default_pat_header}
 
-# ── VUE : RECHERCHE ──────────────────────────────────────────────────────────
+# ── VUES ─────────────────────────────────────────────────────────────────────
 def view_search(data):
     st.subheader("🔍 Rechercher un patient")
     rows = list(data["patients"])
@@ -210,7 +261,6 @@ def view_search(data):
         tel_link(num)
         whatsapp_link(num, text="Bonjour, c’est l’ophtalmologie.")
 
-# ── VUE : AJOUT ──────────────────────────────────────────────────────────────
 def view_add(data):
     st.subheader("➕ Ajouter un patient")
 
@@ -244,20 +294,37 @@ def view_add(data):
             try:
                 h_pat, _rows = read_sheet_as_dicts(S_PAT)
                 if not h_pat:
-                    h_pat = data["pat_header"]
+                    h_pat = [
+                        "ID","Nom du patient","Numéro de téléphone","Date de consultation",
+                        "Pathologie / Catégorie","Diagnostic","Notes dictées (transcription)",
+                        "Photo Ref","Prochain rendez-vous / Suivi (date)","Priorité (Faible/Moyen/Urgent)",
+                        "Consentement photo (Oui/Non)","Lieu (Urgences/Consultation/Bloc)",
+                        "Tags","Créé le","Dernière mise à jour"
+                    ]
 
+                # 1) Upload photo (si fournie) vers Drive
                 photo_ref = ""
                 if img is not None:
-                    ensure_headers(S_MEDIA, ["MediaID","Filename","MIME","B64"])
+                    folder_id = _get_or_create_folder_id()
+                    # on lit tout le fichier en mémoire et on uploade en "image/jpeg" (Drive sait montrer)
+                    raw = img.read()
+                    file_like = io.BytesIO(raw)
+                    file_like.seek(0)
+                    file_id, web_link = upload_image_to_drive(file_like, img.name, folder_id)
+
+                    # 2) Inscrire une ligne dans l’onglet Media (sans base64)
+                    ensure_headers(S_MEDIA, ["MediaID","Filename","MIME","DriveFileID","DriveLink"])
                     media_row = {
                         "MediaID": uuid.uuid4().hex[:10],
                         "Filename": img.name,
-                        "MIME": img.type or "image/jpeg",
-                        "B64": base64.b64encode(img.read()).decode("utf-8"),
+                        "MIME": "image/jpeg",
+                        "DriveFileID": file_id,
+                        "DriveLink": web_link or f"https://drive.google.com/file/d/{file_id}/view"
                     }
-                    append_row(S_MEDIA, ["MediaID","Filename","MIME","B64"], media_row)
-                    photo_ref = f"MEDIA:{media_row['MediaID']}"
+                    append_row(S_MEDIA, ["MediaID","Filename","MIME","DriveFileID","DriveLink"], media_row)
+                    photo_ref = f"DRIVE:{file_id}"
 
+                # 3) Append la fiche patient
                 row = {
                     "ID": uuid.uuid4().hex[:8],
                     "Nom du patient": nom.strip(),
@@ -266,7 +333,7 @@ def view_add(data):
                     "Pathologie / Catégorie": patho,
                     "Diagnostic": diag.strip(),
                     "Notes dictées (transcription)": (notes or "").strip(),
-                    "Photo Ref": photo_ref,
+                    "Photo Ref": photo_ref,  # ex: DRIVE:1AbC...
                     "Prochain rendez-vous / Suivi (date)": suiv.strftime("%Y-%m-%d") if suiv else "",
                     "Priorité (Faible/Moyen/Urgent)": prio,
                     "Consentement photo (Oui/Non)": consent,
@@ -276,12 +343,11 @@ def view_add(data):
                     "Dernière mise à jour": datetime.now().strftime("%Y-%m-%d %H:%M"),
                 }
                 append_row(S_PAT, h_pat, row)
-                st.success("✅ Enregistré (Google Sheets).")
+                st.success("✅ Enregistré (Google Sheets + Drive).")
                 st.cache_data.clear(); st.rerun()
             except Exception as e:
                 st.error(f"Échec enregistrement: {e}")
 
-# ── VUE : EXPORT ─────────────────────────────────────────────────────────────
 def _csv_bytes(header, dict_rows):
     sio = io.StringIO(); w = csv.writer(sio)
     w.writerow(header)
@@ -291,16 +357,25 @@ def _csv_bytes(header, dict_rows):
 
 def view_export(data):
     st.subheader("📤 Export des données")
-    st.markdown('<div class="soft">Télécharge un backup local.</div>', unsafe_allow_html=True)
+    st.markdown('<div class="soft">Backup local des données.</div>', unsafe_allow_html=True)
 
-    pat_header = data["pat_header"]; pat_rows = data["patients"]
+    # Patients
+    pat_header = [ "ID","Nom du patient","Numéro de téléphone","Date de consultation",
+                   "Pathologie / Catégorie","Diagnostic","Notes dictées (transcription)",
+                   "Photo Ref","Prochain rendez-vous / Suivi (date)","Priorité (Faible/Moyen/Urgent)",
+                   "Consentement photo (Oui/Non)","Lieu (Urgences/Consultation/Bloc)",
+                   "Tags","Créé le","Dernière mise à jour" ]
+    pat_rows = data["patients"]
     st.download_button("⬇️ Patients (CSV)", _csv_bytes(pat_header, pat_rows),
                        file_name="patients.csv", mime="text/csv")
 
-    media_header = ["MediaID","Filename","MIME","B64"]; media_rows = data["media"]
+    # Media (Drive)
+    media_header = ["MediaID","Filename","MIME","DriveFileID","DriveLink"]
+    media_rows = data["media"]
     st.download_button("⬇️ Media (CSV)", _csv_bytes(media_header, media_rows),
                        file_name="media.csv", mime="text/csv")
 
+    # Tout JSON
     bundle = {"patients": pat_rows, "media": media_rows, "exported_at": datetime.now().isoformat()}
     st.download_button("⬇️ Tout (JSON)", json.dumps(bundle, ensure_ascii=False).encode("utf-8"),
                        file_name="ophtadossier_export.json", mime="application/json")
@@ -311,6 +386,9 @@ def main():
     try:
         _ = _sheet_id()
         st.markdown('<div class="good">Connexion OK au tableur.</div>', unsafe_allow_html=True)
+        # Test accès Drive + dossier
+        fid = _get_or_create_folder_id()
+        st.caption(f"Dossier Drive prêt (ID: {fid[:8]}…)")
     except Exception as e:
         st.error(f"Erreur d’authentification/accès: {e}")
         return
