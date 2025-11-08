@@ -1,17 +1,34 @@
-import os, io, uuid, base64, urllib.parse, unicodedata
-from datetime import datetime, date
+import re, base64, unicodedata, urllib.parse, uuid
+from datetime import date, datetime
+
 import pandas as pd
 import streamlit as st
-import gspread
 from google.oauth2.service_account import Credentials
+from googleapiclient.discovery import build
 import streamlit.components.v1 as components
-from gspread.exceptions import WorksheetNotFound, APIError
 
-APP_TITLE = "OphtaTrack — Suivi patients (Complet + Dictée)"
-MEDIA_SHEET = "Media"
+APP_TITLE = "OphtaTrack — Patients (API Sheets only)"
+SHEET_NAME_PAT = "Patients"
+SHEET_NAME_MENU = "Menu"
+SHEET_NAME_PARAM = "Paramètres"
+SHEET_NAME_MEDIA = "Media"
+
+# ---------------------- Auth & service ----------------------
+def _creds():
+    sa_info = st.secrets["GCP_SERVICE_ACCOUNT"]
+    scopes = ["https://www.googleapis.com/auth/spreadsheets"]
+    return Credentials.from_service_account_info(sa_info, scopes=scopes)
+
+def _svc():
+    return build("sheets", "v4", credentials=_creds(), cache_discovery=False)
+
+def _sheet_id():
+    url = st.secrets["SHEET_URL"]
+    m = re.search(r"/spreadsheets/d/([a-zA-Z0-9\-_]+)", url)
+    return m.group(1)
 
 # ---------------------- Utils ----------------------
-def norm(s: str):
+def _norm(s):
     if s is None: return ""
     s = str(s)
     s = unicodedata.normalize("NFKD", s)
@@ -19,153 +36,100 @@ def norm(s: str):
     s = s.replace("\u00A0"," ")
     return " ".join(s.strip().lower().split())
 
-def find_col(df, candidates):
-    if df is None or df.empty: return None
-    cmap = {norm(c): c for c in df.columns}
+def _find_col(columns, candidates):
+    cmap = {_norm(c): c for c in columns}
     for c in candidates:
-        k = norm(c)
+        k = _norm(c)
         if k in cmap: return cmap[k]
     return None
 
-# ---------------------- Google Sheets ----------------------
-def gsheet_client():
-    try:
-        sa_info = st.secrets["GCP_SERVICE_ACCOUNT"]
-        scopes = ["https://www.googleapis.com/auth/spreadsheets"]
-        creds = Credentials.from_service_account_info(sa_info, scopes=scopes)
-        client = gspread.authorize(creds)
-        return client
-    except Exception as e:
-        st.error(f"Secrets Google invalides: {e}")
-        return None
-
-def gsheet_open(client):
-    url = st.secrets.get("SHEET_URL", None)
-    if not client or not url:
-        return None
-    try:
-        return client.open_by_url(url)
-    except Exception as e:
-        st.error(f"Ouverture du tableur impossible: {e}")
-        return None
-
-def ws_to_df(ws):
-    try:
-        rows = ws.get_all_records()
-        return pd.DataFrame(rows)
-    except Exception as e:
-        st.error(f"Lecture worksheet échouée: {e}")
+# ---------------------- Sheets helpers ----------------------
+def read_sheet_as_df(sheet_name: str) -> pd.DataFrame:
+    service = _svc()
+    sid = _sheet_id()
+    resp = service.spreadsheets().values().get(
+        spreadsheetId=sid, range=f"{sheet_name}!A1:ZZ100000"
+    ).execute()
+    values = resp.get("values", [])
+    if not values:
         return pd.DataFrame()
+    header = values[0]
+    rows = values[1:]
+    # pad rows length to header
+    fixed = [r + [""]*(len(header)-len(r)) for r in rows]
+    return pd.DataFrame(fixed, columns=header)
 
-def ensure_media_ws(sh):
-    try:
-        ws = sh.worksheet(MEDIA_SHEET)
-        headers = ws.row_values(1)
-        if not headers:
-            ws.update([["MediaID","Filename","MIME","B64"]])
-        return ws
-    except WorksheetNotFound:
-        ws = sh.add_worksheet(title=MEDIA_SHEET, rows=1000, cols=4)
-        ws.update([["MediaID","Filename","MIME","B64"]])
-        return ws
+def ensure_media_headers():
+    service = _svc()
+    sid = _sheet_id()
+    # essaye de lire A1
+    resp = service.spreadsheets().values().get(
+        spreadsheetId=sid, range=f"{SHEET_NAME_MEDIA}!A1:D1"
+    ).execute()
+    values = resp.get("values", [])
+    if not values:
+        body = {"values": [["MediaID", "Filename", "MIME", "B64"]]}
+        service.spreadsheets().values().update(
+            spreadsheetId=sid,
+            range=f"{SHEET_NAME_MEDIA}!A1",
+            valueInputOption="USER_ENTERED",
+            body=body
+        ).execute()
 
-def append_dict(ws, d: dict):
-    header = ws.row_values(1)
-    if not header:
-        header = list(d.keys())
-        ws.update([header])
-    vals = [d.get(h, "") for h in header]
-    ws.append_row(vals)
+def append_row(sheet_name: str, header: list[str], row_dict: dict):
+    service = _svc()
+    sid = _sheet_id()
+    body = {"values": [[row_dict.get(h, "") for h in header]]}
+    service.spreadsheets().values().append(
+        spreadsheetId=sid,
+        range=f"{sheet_name}!A1",
+        valueInputOption="USER_ENTERED",
+        insertDataOption="INSERT_ROWS",
+        body=body
+    ).execute()
 
-@st.cache_data
-def load_data():
-    client = gsheet_client()
-    sh = gsheet_open(client)
-    if sh:
-        try:
-            ws_menu = sh.worksheet("Menu")
-            ws_pat = sh.worksheet("Patients")
-            ws_par = sh.worksheet("Paramètres")
-            ws_sta = sh.worksheet("Statistiques")
-            ensure_media_ws(sh)
-        except Exception as e:
-            st.error("⚠️ Vérifie que les onglets 'Menu', 'Patients', 'Paramètres', 'Statistiques' existent.")
-            st.stop()
-        return {"mode":"sheets","sh":sh,
-                "menu": ws_to_df(ws_menu),
-                "patients": ws_to_df(ws_pat),
-                "params": ws_to_df(ws_par),
-                "stats": ws_to_df(ws_sta)}
-    return {"mode":"local","sh":None,
-            "menu": pd.DataFrame(),
-            "patients": pd.DataFrame(),
-            "params": pd.DataFrame(),
-            "stats": pd.DataFrame()}
-
-# ---------------------- Contact links ----------------------
-def tel_link(number: str):
-    if not number: return
-    number = "".join(ch for ch in str(number) if ch.isdigit() or ch=="+")
-    st.markdown(f"[📞 Appeler {number}](tel:{number})")
-
-def whatsapp_link(number: str, text=""):
-    if not number: return
-    n = "".join(ch for ch in str(number) if ch.isdigit())
-    url = f"https://wa.me/{n}"
-    if text: url += f"?text={urllib.parse.quote(text)}"
-    st.markdown(f"[💬 WhatsApp {number}]({url})")
-    if str(number).strip().startswith("0") and not str(number).strip().startswith("+"):
-        st.caption("ℹ️ Pour WhatsApp, utilise le format international (ex. +2126…).")
-
-# ---------------------- Voice dictation (Web Speech API) ----------------------
+# ---------------------- Dictée vocale ----------------------
 def voice_dictation(key: str):
-    if key not in st.session_state:
-        st.session_state[key] = ""
+    if key not in st.session_state: st.session_state[key] = ""
     html = f"""
     <div>
       <button id="start_{key}" style="padding:8px 12px;">🎙️ Démarrer/Stop</button>
       <span id="status_{key}" style="margin-left:8px;color:#888;">Prêt</span>
       <script>
-        function supportsSpeech() {{
-            return ('webkitSpeechRecognition' in window) || ('SpeechRecognition' in window);
-        }}
+        function supportsSpeech() {{ return ('webkitSpeechRecognition' in window) || ('SpeechRecognition' in window); }}
         const statusEl = document.getElementById("status_{key}");
         const btn = document.getElementById("start_{key}");
-        if (!supportsSpeech()) {{
-            statusEl.textContent = "Dictée non supportée par ce navigateur.";
-        }} else {{
+        if (!supportsSpeech()) {{ statusEl.textContent = "Dictée non supportée par ce navigateur."; }}
+        else {{
             const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-            const rec = new SR();
-            rec.continuous = true;
-            rec.interimResults = true;
-            rec.lang = "fr-FR";
-            let running = false;
-            let buffer = "";
-            rec.onresult = (e) => {{
-                let finalText = "";
-                for (let i = e.resultIndex; i < e.results.length; i++) {{
-                    const res = e.results[i];
-                    if (res.isFinal) finalText += res[0].transcript + " ";
-                }}
-                if (finalText) {{
-                    buffer += finalText;
-                    const pyCmd = {{type:"streamlit:setComponentValue", key:"{key}", value: buffer}};
-                    window.parent.postMessage(pyCmd, "*");
-                }}
+            const rec = new SR(); rec.continuous = true; rec.interimResults = true; rec.lang = "fr-FR";
+            let running=false; let buffer="";
+            rec.onresult = (e)=>{{
+                let finalText=""; for (let i=e.resultIndex;i<e.results.length;i++){{ const r=e.results[i]; if(r.isFinal) finalText+=r[0].transcript+" "; }}
+                if (finalText) {{ buffer+=finalText; const msg={{type:"streamlit:setComponentValue", key:"{key}", value:buffer}}; window.parent.postMessage(msg, "*"); }}
             }};
-            rec.onstart = ()=>{{ statusEl.textContent = "Écoute…"; }};
-            rec.onerror = ()=>{{ statusEl.textContent = "Erreur micro (autorise l'accès)."; }};
-            rec.onend = ()=>{{ statusEl.textContent = "Arrêté"; running=false; }};
-            btn.onclick = ()=>{{
-                if (!running) {{ rec.start(); running=true; statusEl.textContent="Démarré"; }}
-                else {{ rec.stop(); running=false; statusEl.textContent="Arrêté"; }}
-            }};
+            rec.onstart=()=>{{ statusEl.textContent="Écoute…"; }};
+            rec.onerror=()=>{{ statusEl.textContent="Erreur micro (autorise l'accès)."; }};
+            rec.onend=()=>{{ statusEl.textContent="Arrêté"; running=false; }};
+            btn.onclick=()=>{{ if(!running){{rec.start();running=true;statusEl.textContent="Démarré";}} else {{rec.stop();running=false;statusEl.textContent="Arrêté";}} }};
         }}
       </script>
     </div>
     """
     components.html(html, height=60)
     return st.session_state.get(key, "")
+
+# ---------------------- Cache data ----------------------
+@st.cache_data
+def load_all():
+    menu = read_sheet_as_df(SHEET_NAME_MENU)
+    patients = read_sheet_as_df(SHEET_NAME_PAT)
+    params = read_sheet_as_df(SHEET_NAME_PARAM)
+    try:
+        ensure_media_headers()
+    except Exception:
+        pass
+    return {"menu": menu, "patients": patients, "params": params}
 
 # ---------------------- UI ----------------------
 def add_patient_form(data):
@@ -174,24 +138,27 @@ def add_patient_form(data):
 
     patho_choices = ["Glaucome","Réfraction","Cataracte","Rétine (DMLA/DR)","Urgences"]
     if not menu_df.empty and "Pathologie / Catégorie" in menu_df.columns:
-        patho_choices = sorted(menu_df["Pathologie / Catégorie"].dropna().astype(str).unique().tolist()) or patho_choices
+        vals = menu_df["Pathologie / Catégorie"].dropna().astype(str).unique().tolist()
+        if vals: patho_choices = sorted(vals)
+
     prio_choices = ["Faible","Moyen","Urgent"]
-    if not params_df.empty and "Clé" in params_df.columns:
-        prio_choices = params_df[params_df["Clé"]=="Priorité"]["Valeur"].dropna().astype(str).tolist() or prio_choices
+    if "Clé" in params_df.columns:
+        pv = params_df[params_df["Clé"]=="Priorité"]["Valeur"].dropna().astype(str).tolist()
+        if pv: prio_choices = pv
     consent_choices = ["Oui","Non"]
-    if not params_df.empty and "Clé" in params_df.columns:
-        cvals = params_df[params_df["Clé"]=="Consentement"]["Valeur"].dropna().astype(str).tolist()
-        if cvals: consent_choices = cvals
+    if "Clé" in params_df.columns:
+        cv = params_df[params_df["Clé"]=="Consentement"]["Valeur"].dropna().astype(str).tolist()
+        if cv: consent_choices = cv
     lieu_choices = ["Urgences","Consultation","Bloc"]
-    if not params_df.empty and "Clé" in params_df.columns:
-        lvals = params_df[params_df["Clé"]=="Lieu"]["Valeur"].dropna().astype(str).tolist()
-        if lvals: lieu_choices = lvals
+    if "Clé" in params_df.columns:
+        lv = params_df[params_df["Clé"]=="Lieu"]["Valeur"].dropna().astype(str).tolist()
+        if lv: lieu_choices = lv
 
     with st.form("add_form_full"):
         c1, c2 = st.columns(2)
         with c1:
             nom = st.text_input("Nom du patient")
-            phone = st.text_input("Numéro de téléphone (format international recommandé, ex. +2126...)")
+            phone = st.text_input("Numéro de téléphone (format international, ex. +2126...)")
             datec = st.date_input("Date de consultation", value=date.today())
             pathocat = st.selectbox("Pathologie / Catégorie", patho_choices)
             prio = st.selectbox("Priorité (Faible/Moyen/Urgent)", prio_choices)
@@ -209,21 +176,34 @@ def add_patient_form(data):
 
         if ok:
             try:
-                sh = data["sh"]
-                if not sh:
-                    st.error("Mode local : configure Google Sheets pour la persistance.")
-                    return
-                # write photo first if any
+                # 1) lire l'entête actuelle du sheet Patients
+                df_pat = read_sheet_as_df(SHEET_NAME_PAT)
+                if df_pat.empty:
+                    header = [
+                        "ID","Nom du patient","Numéro de téléphone","Date de consultation",
+                        "Pathologie / Catégorie","Diagnostic","Notes dictées (transcription)",
+                        "Photo Ref","Prochain rendez-vous / Suivi (date)","Priorité (Faible/Moyen/Urgent)",
+                        "Consentement photo (Oui/Non)","Lieu (Urgences/Consultation/Bloc)",
+                        "Tags","Créé le","Dernière mise à jour"
+                    ]
+                else:
+                    header = list(df_pat.columns)
+
+                # 2) si photo → append d'abord dans Media
                 photo_ref = ""
                 if img is not None:
-                    ws_med = ensure_media_ws(sh)
-                    content = img.read()
-                    b64 = base64.b64encode(content).decode("utf-8")
-                    mime = img.type or "image/jpeg"
-                    media_id = uuid.uuid4().hex[:10]
-                    append_dict(ws_med, {"MediaID":media_id,"Filename":img.name,"MIME":mime,"B64":b64})
-                    photo_ref = f"MEDIA:{media_id}"
+                    ensure_media_headers()
+                    media_header = ["MediaID","Filename","MIME","B64"]
+                    media_row = {
+                        "MediaID": uuid.uuid4().hex[:10],
+                        "Filename": img.name,
+                        "MIME": img.type or "image/jpeg",
+                        "B64": base64.b64encode(img.read()).decode("utf-8"),
+                    }
+                    append_row(SHEET_NAME_MEDIA, media_header, media_row)
+                    photo_ref = f"MEDIA:{media_row['MediaID']}"
 
+                # 3) construire la ligne patient (dans l'ordre du header)
                 new_row = {
                     "ID": uuid.uuid4().hex[:8],
                     "Nom du patient": nom.strip(),
@@ -241,74 +221,28 @@ def add_patient_form(data):
                     "Créé le": datetime.now().strftime("%Y-%m-%d %H:%M"),
                     "Dernière mise à jour": datetime.now().strftime("%Y-%m-%d %H:%M"),
                 }
-                ws_pat = sh.worksheet("Patients")
-                append_dict(ws_pat, new_row)
-                st.success("✅ Enregistré de façon PERSISTANTE (Google Sheets).")
+                append_row(SHEET_NAME_PAT, header, new_row)
+                st.success("✅ Enregistré (API Google Sheets).")
                 st.cache_data.clear()
-            except APIError as e:
-                st.error(f"Erreur API Google Sheets (droits/quotas) : {e}")
             except Exception as e:
-                st.error(f"Échec enregistrement: {e}")
+                st.error(f"Échec enregistrement (API): {e}")
 
 def page_patients(data):
     st.subheader("Patients")
-
-    menu_df, patients_df, params_df = data["menu"], data["patients"], data["params"]
-    col_name  = find_col(patients_df, ["Nom du patient","Nom"])
-    col_phone = find_col(patients_df, ["Numéro de téléphone","Téléphone","Telephone","Phone"])
-    col_date  = find_col(patients_df, ["Date de consultation","Date","Date consultation"])
-    col_patho = find_col(patients_df, ["Pathologie / Catégorie","Pathologie","Catégorie","Categorie"])
-    col_diag  = find_col(patients_df, ["Diagnostic"])
-    col_tags  = find_col(patients_df, ["Tags"])
-    col_prio  = find_col(patients_df, ["Priorité (Faible/Moyen/Urgent)","Priorite"])
-
-    c1, c2, c3, c4 = st.columns(4)
-    with c1: q = st.text_input("🔎 Rechercher (nom, diagnostic, tags)")
-    with c2:
-        menu_patho_col = "Pathologie / Catégorie" if not menu_df.empty and "Pathologie / Catégorie" in menu_df.columns else None
-        patho_opts = ["— Toutes —"] + (sorted(menu_df[menu_patho_col].dropna().astype(str).unique().tolist()) if menu_patho_col else [])
-        patho = st.selectbox("Pathologie", patho_opts)
-    with c3:
-        prio_choices = params_df[params_df["Clé"]=="Priorité"]["Valeur"].tolist() if "Clé" in params_df.columns else ["Faible","Moyen","Urgent"]
-        prio = st.selectbox("Priorité", ["— Toutes —"] + prio_choices)
-    with c4: sort = st.selectbox("Trier par", ["Date (récent)","Priorité","Nom"])
-
-    df = patients_df.copy()
-    if q and not df.empty:
-        mask = pd.Series([False]*len(df))
-        if col_name: mask |= df[col_name].fillna("").astype(str).str.contains(q, case=False)
-        if col_diag: mask |= df[col_diag].fillna("").astype(str).str.contains(q, case=False)
-        if col_tags: mask |= df[col_tags].fillna("").astype(str).str.contains(q, case=False)
-        df = df[mask]
-    if patho != "— Toutes —" and col_patho and not df.empty:
-        df = df[df[col_patho]==patho]
-    if prio != "— Toutes —" and col_prio and not df.empty:
-        df = df[df[col_prio]==prio]
+    df = data["patients"]
+    # colonnes utiles
+    col_name  = _find_col(df.columns, ["Nom du patient","Nom"])
+    col_phone = _find_col(df.columns, ["Numéro de téléphone","Téléphone","Telephone","Phone"])
+    col_date  = _find_col(df.columns, ["Date de consultation","Date","Date consultation"])
+    col_patho = _find_col(df.columns, ["Pathologie / Catégorie","Pathologie","Catégorie","Categorie"])
+    col_diag  = _find_col(df.columns, ["Diagnostic"])
+    col_prio  = _find_col(df.columns, ["Priorité (Faible/Moyen/Urgent)","Priorite"])
 
     if not df.empty:
-        if sort=="Date (récent)" and col_date:
-            df["__d"] = pd.to_datetime(df[col_date], errors="coerce")
-            df = df.sort_values("__d", ascending=False).drop(columns="__d")
-        elif sort=="Priorité" and col_prio:
-            order={"Urgent":0,"Moyen":1,"Faible":2}
-            df["__p"]=df[col_prio].map(order)
-            df = df.sort_values("__p", na_position="last").drop(columns="__p")
-        elif col_name:
-            df = df.sort_values(col_name, na_position="last")
         show_cols = [x for x in [col_name, col_patho, col_diag, col_date, col_prio, col_phone] if x]
-        st.dataframe(df[show_cols], use_container_width=True)
+        st.dataframe(df[show_cols] if show_cols else df, use_container_width=True)
     else:
         st.info("Aucun patient pour l’instant. Utilise le formulaire ci-dessous pour en ajouter.")
-
-    st.markdown("---")
-    st.subheader("📞 / 💬 Contact rapide")
-    if not df.empty and col_name:
-        who = st.selectbox("Sélectionne un patient", ["—"] + df[col_name].dropna().astype(str).tolist())
-        if who != "—" and col_phone:
-            num = df[df[col_name]==who][col_phone].iloc[0]
-            tel_link(num); whatsapp_link(num, text="Bonjour, c’est le service d’ophtalmologie.")
-    else:
-        st.caption("Ajoute d’abord un patient pour activer le contact rapide.")
 
     st.markdown("---")
     add_patient_form(data)
@@ -316,10 +250,7 @@ def page_patients(data):
 def main():
     st.set_page_config(page_title=APP_TITLE, layout="wide")
     st.title(APP_TITLE)
-    st.caption("Formulaire complet + dictée vocale. Version robuste (écriture/Media).")
-
-    data = load_data()
-    st.sidebar.header("Navigation")
+    data = load_all()
     page_patients(data)
 
 if __name__ == "__main__":
