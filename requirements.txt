@@ -1,9 +1,11 @@
-streamlit>=1.36
-pandas>=2.1
-openpyxl>=3.1
-Pillow>=10.0
+streamlit==1.38.0
+pandas==2.2.2
+openpyxl==3.1.5
+Pillow==10.4.0
 
-# Correctif compat compat Google Auth / gspread / requests
+# Combo stable coté Google APIs
 gspread==6.0.2
 google-auth==2.29.0
 requests==2.31.0
+google-auth-httplib2==0.2.0
+httplib2==0.22.0
