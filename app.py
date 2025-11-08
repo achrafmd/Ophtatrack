@@ -160,11 +160,14 @@ def sb_upload_many(files, base_name: str, url_ttl_days: int = 365):
 
         # ✅ Upload direct (bytes)
         try:
-            sb.storage.from_(bucket).upload(
-                path=path,
-                file=raw,  # ✅ bytes directement
-                file_options={"contentType": mimetype, "upsert": True}
-            )
+           sb.storage.from_(bucket).upload(
+    path=path,
+    file=raw,  # bytes
+    file_options={
+        "contentType": str(mimetype or "image/jpeg"),  # string obligatoire
+        "upsert": "true"                                # ⚠️ en chaîne, pas bool
+    }
+)
         except Exception as e:
             st.error(f"Erreur upload Supabase {path}: {e}")
             continue
