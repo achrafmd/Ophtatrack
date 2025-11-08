@@ -1,9 +1,9 @@
 # ──────────────────────────────────────────────────────────────────────────────
-# OphtaDossier — Google Sheets + Google Drive (photos)
-# - Menu: 🔍 Rechercher | ➕ Ajouter | 📤 Export
-# - Photos: upload vers Google Drive (dans un dossier partagé avec le SA)
-# - Sheets: lecture/écriture via Google Sheets API (values.get/append)
-# - Dictée vocale, Appel/WhatsApp
+# OphtaDossier — Google Sheets + Google Drive (multi-photos, nommage patient)
+# Menu: 🔍 Rechercher | ➕ Ajouter | 📤 Export
+# Persistance : Google Sheets API (values.get/append)
+# Photos : Google Drive (1 ligne par photo dans onglet Media)
+# Dictée vocale, Appel/WhatsApp
 # ──────────────────────────────────────────────────────────────────────────────
 
 import re, unicodedata, urllib.parse, uuid, io, csv, json
@@ -14,7 +14,8 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
 import streamlit.components.v1 as components
 
-st.set_page_config(page_title="OphtaDossier — Drive Storage", layout="wide")
+# IMPORTANT : premier appel Streamlit
+st.set_page_config(page_title="OphtaDossier — Suivi patients", layout="wide")
 
 APP_TITLE = "OphtaDossier — Suivi patients"
 S_PAT, S_MENU, S_PARAM, S_MEDIA = "Patients", "Menu", "Paramètres", "Media"
@@ -36,8 +37,8 @@ def _creds(scopes=None):
     if scopes is None:
         scopes = [
             "https://www.googleapis.com/auth/spreadsheets",
-            "https://www.googleapis.com/auth/drive.file",   # upload dans un dossier partagé
-            "https://www.googleapis.com/auth/drive.metadata.readonly"
+            "https://www.googleapis.com/auth/drive.file",
+            "https://www.googleapis.com/auth/drive.metadata.readonly",
         ]
     sa_info = st.secrets["GCP_SERVICE_ACCOUNT"]
     return Credentials.from_service_account_info(sa_info, scopes=scopes)
@@ -75,6 +76,19 @@ def whatsapp_link(number: str, text=""):
     if str(number).startswith("0") and not str(number).startswith("+"):
         st.caption("ℹ️ Pour WhatsApp, utilise le format international (ex. +2126…).")
 
+# Nommage des photos : Nom_Date_Diagnostic_index.ext
+def _slug(s: str) -> str:
+    s = unicodedata.normalize("NFKD", str(s or "")).encode("ascii", "ignore").decode("ascii")
+    s = re.sub(r"[^\w\-]+", "_", s).strip("_")
+    s = re.sub(r"_+", "_", s)
+    return s[:80]
+
+def make_photo_basename(nom_patient: str, date_consult, diagnostic: str) -> str:
+    date_txt = date_consult.strftime("%Y-%m-%d") if hasattr(date_consult, "strftime") else str(date_consult or "").strip()
+    nom = _slug(nom_patient) or "Patient"
+    diag = _slug(diagnostic) or "ND"
+    return f"{nom}_{date_txt}_{diag}"
+
 # ── SHEETS HELPERS ───────────────────────────────────────────────────────────
 def _get_range(sheet: str, rng: str="A1:ZZ100000"):
     return _svc_sheets().spreadsheets().values().get(
@@ -109,13 +123,10 @@ def append_row(sheet: str, header: list[str], row: dict):
 
 # ── DRIVE HELPERS ────────────────────────────────────────────────────────────
 def _get_or_create_folder_id():
-    """Retourne le folder ID à utiliser pour stocker les photos."""
-    # 1) si on a un ID explicite dans les secrets, on l'utilise
     folder_id = st.secrets.get("DRIVE_FOLDER_ID", "").strip()
     if folder_id:
         return folder_id
-
-    # 2) sinon, on tente de trouver/créer un dossier par nom dans le Drive du SA
+    # fallback : créer dans le Drive du service account
     name = DEFAULT_DRIVE_FOLDER_NAME
     drive = _svc_drive()
     q = f"name = '{name}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
@@ -123,25 +134,54 @@ def _get_or_create_folder_id():
     files = resp.get("files", [])
     if files:
         return files[0]["id"]
-    # créer le dossier dans le Drive du SA
     meta = {"name": name, "mimeType": "application/vnd.google-apps.folder"}
     newf = drive.files().create(body=meta, fields="id").execute()
     return newf["id"]
 
-def upload_image_to_drive(file, filename_hint: str, folder_id: str):
-    """Uploade un fichier image vers Drive, renvoie (file_id, webViewLink)."""
+def upload_many_images_to_drive(files, folder_id: str, base_name: str):
+    """
+    Upload plusieurs images vers Drive avec nommage contrôlé:
+    <base_name>_<index>.<ext>
+    Écrit 1 ligne par photo dans l’onglet Media (sans base64).
+    Retourne la liste des refs 'DRIVE:<fileId>'.
+    """
+    ensure_headers(S_MEDIA, ["MediaID","Filename","MIME","DriveFileID","DriveLink"])
     drive = _svc_drive()
-    media = MediaIoBaseUpload(file, mimetype="image/jpeg", resumable=False)
-    metadata = {
-        "name": filename_hint or ("photo_" + uuid.uuid4().hex[:8] + ".jpg"),
-        "parents": [folder_id],
-    }
-    created = drive.files().create(
-        body=metadata,
-        media_body=media,
-        fields="id, webViewLink"
-    ).execute()
-    return created.get("id"), created.get("webViewLink")
+    refs = []
+
+    def _ext_for(f):
+        mt = getattr(f, "type", "") or ""
+        if "png" in mt: return ".png"
+        if "jpeg" in mt or "jpg" in mt: return ".jpg"
+        name = getattr(f, "name", "") or ""
+        m = re.search(r"\.(png|jpg|jpeg)$", name, re.IGNORECASE)
+        return f".{m.group(1).lower()}" if m else ".jpg"
+
+    for i, f in enumerate(files, start=1):
+        raw = f.read()
+        bio = io.BytesIO(raw); bio.seek(0)
+        mime = getattr(f, "type", None) or "image/jpeg"
+        ext  = _ext_for(f)
+        fname = f"{base_name}_{i}{ext}"
+
+        media = MediaIoBaseUpload(bio, mimetype=mime, resumable=False)
+        meta  = {"name": fname, "parents": [folder_id]}
+        created = drive.files().create(body=meta, media_body=media,
+                                       fields="id, webViewLink").execute()
+        file_id = created.get("id")
+        link    = created.get("webViewLink") or f"https://drive.google.com/file/d/{file_id}/view"
+
+        media_row = {
+            "MediaID": uuid.uuid4().hex[:10],
+            "Filename": fname,
+            "MIME": mime,
+            "DriveFileID": file_id,
+            "DriveLink": link
+        }
+        append_row(S_MEDIA, ["MediaID","Filename","MIME","DriveFileID","DriveLink"], media_row)
+        refs.append(f"DRIVE:{file_id}")
+
+    return refs
 
 # ── DICTÉE VOCALE (safe f-string) ────────────────────────────────────────────
 def voice_dictation(key: str):
@@ -197,7 +237,6 @@ def load_all():
         "Consentement photo (Oui/Non)","Lieu (Urgences/Consultation/Bloc)",
         "Tags","Créé le","Dernière mise à jour"
     ]
-    # entêtes si besoin
     ensure_headers(S_MEDIA, ["MediaID","Filename","MIME","DriveFileID","DriveLink"])
     ensure_headers(S_PAT, default_pat_header)
 
@@ -287,7 +326,11 @@ def view_add(data):
             _ = voice_dictation("notes_text")
             suiv  = st.date_input("Prochain rendez-vous / Suivi (date)", value=None)
             tags  = st.text_input("Tags (séparés par des virgules)")
-            img   = st.file_uploader("Photo (optionnel)", type=["png","jpg","jpeg"])
+            img   = st.file_uploader(
+                "Photos (optionnel — multiples autorisées)",
+                type=["png","jpg","jpeg"],
+                accept_multiple_files=True
+            )
         ok = st.form_submit_button("Enregistrer")
 
         if ok:
@@ -302,29 +345,16 @@ def view_add(data):
                         "Tags","Créé le","Dernière mise à jour"
                     ]
 
-                # 1) Upload photo (si fournie) vers Drive
+                # 1) Upload multi-photos vers Drive (noms = Nom_Date_Diagnostic_index.ext)
                 photo_ref = ""
-                if img is not None:
-                    folder_id = _get_or_create_folder_id()
-                    # on lit tout le fichier en mémoire et on uploade en "image/jpeg" (Drive sait montrer)
-                    raw = img.read()
-                    file_like = io.BytesIO(raw)
-                    file_like.seek(0)
-                    file_id, web_link = upload_image_to_drive(file_like, img.name, folder_id)
+                if img:
+                    files = img if isinstance(img, list) else [img]
+                    folder_id = st.secrets.get("DRIVE_FOLDER_ID", "").strip() or _get_or_create_folder_id()
+                    base_name = make_photo_basename(nom, datec, diag)
+                    refs = upload_many_images_to_drive(files, folder_id, base_name)  # "DRIVE:<id>" x N
+                    photo_ref = ";".join(refs)
 
-                    # 2) Inscrire une ligne dans l’onglet Media (sans base64)
-                    ensure_headers(S_MEDIA, ["MediaID","Filename","MIME","DriveFileID","DriveLink"])
-                    media_row = {
-                        "MediaID": uuid.uuid4().hex[:10],
-                        "Filename": img.name,
-                        "MIME": "image/jpeg",
-                        "DriveFileID": file_id,
-                        "DriveLink": web_link or f"https://drive.google.com/file/d/{file_id}/view"
-                    }
-                    append_row(S_MEDIA, ["MediaID","Filename","MIME","DriveFileID","DriveLink"], media_row)
-                    photo_ref = f"DRIVE:{file_id}"
-
-                # 3) Append la fiche patient
+                # 2) Append la fiche patient
                 row = {
                     "ID": uuid.uuid4().hex[:8],
                     "Nom du patient": nom.strip(),
@@ -333,7 +363,7 @@ def view_add(data):
                     "Pathologie / Catégorie": patho,
                     "Diagnostic": diag.strip(),
                     "Notes dictées (transcription)": (notes or "").strip(),
-                    "Photo Ref": photo_ref,  # ex: DRIVE:1AbC...
+                    "Photo Ref": photo_ref,
                     "Prochain rendez-vous / Suivi (date)": suiv.strftime("%Y-%m-%d") if suiv else "",
                     "Priorité (Faible/Moyen/Urgent)": prio,
                     "Consentement photo (Oui/Non)": consent,
@@ -359,7 +389,6 @@ def view_export(data):
     st.subheader("📤 Export des données")
     st.markdown('<div class="soft">Backup local des données.</div>', unsafe_allow_html=True)
 
-    # Patients
     pat_header = [ "ID","Nom du patient","Numéro de téléphone","Date de consultation",
                    "Pathologie / Catégorie","Diagnostic","Notes dictées (transcription)",
                    "Photo Ref","Prochain rendez-vous / Suivi (date)","Priorité (Faible/Moyen/Urgent)",
@@ -369,13 +398,11 @@ def view_export(data):
     st.download_button("⬇️ Patients (CSV)", _csv_bytes(pat_header, pat_rows),
                        file_name="patients.csv", mime="text/csv")
 
-    # Media (Drive)
     media_header = ["MediaID","Filename","MIME","DriveFileID","DriveLink"]
     media_rows = data["media"]
     st.download_button("⬇️ Media (CSV)", _csv_bytes(media_header, media_rows),
                        file_name="media.csv", mime="text/csv")
 
-    # Tout JSON
     bundle = {"patients": pat_rows, "media": media_rows, "exported_at": datetime.now().isoformat()}
     st.download_button("⬇️ Tout (JSON)", json.dumps(bundle, ensure_ascii=False).encode("utf-8"),
                        file_name="ophtadossier_export.json", mime="application/json")
@@ -386,8 +413,7 @@ def main():
     try:
         _ = _sheet_id()
         st.markdown('<div class="good">Connexion OK au tableur.</div>', unsafe_allow_html=True)
-        # Test accès Drive + dossier
-        fid = _get_or_create_folder_id()
+        fid = st.secrets.get("DRIVE_FOLDER_ID", "").strip() or _get_or_create_folder_id()
         st.caption(f"Dossier Drive prêt (ID: {fid[:8]}…)")
     except Exception as e:
         st.error(f"Erreur d’authentification/accès: {e}")
