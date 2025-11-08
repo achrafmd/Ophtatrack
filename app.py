@@ -1,16 +1,6 @@
 # ──────────────────────────────────────────────────────────────────────────────
 # OphtaDossier — Suivi patients (API Google Sheets only)
 # ──────────────────────────────────────────────────────────────────────────────
-# • Menu latéral : 🔍 Rechercher / ➕ Ajouter / 📤 Export
-# • Dictée vocale intégrée (iOS Safari/Chrome OK)
-# • Appel téléphonique & WhatsApp en 1 clic
-# • Photos stockées en base64 dans l’onglet "Media"
-# • Persistance via Google Sheets API (sheets.values.get/append)
-# Config requis dans Streamlit Secrets :
-#   SHEET_URL = "https://docs.google.com/spreadsheets/d/XXXXXXXX/edit"
-#   [GCP_SERVICE_ACCOUNT]
-#   ... (JSON complet du service account)
-# ──────────────────────────────────────────────────────────────────────────────
 
 import re, base64, unicodedata, urllib.parse, uuid, io, csv, json
 from datetime import date, datetime
@@ -19,25 +9,23 @@ from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 import streamlit.components.v1 as components
 
+# 1) set_page_config = TOUT EN HAUT, AVANT TOUT AUTRE st.*
+st.set_page_config(page_title="OphtaDossier — Suivi patients", layout="wide")
+
 APP_TITLE = "OphtaDossier — Suivi patients"
+S_PAT, S_MENU, S_PARAM, S_MEDIA = "Patients", "Menu", "Paramètres", "Media"
 
-S_PAT   = "Patients"
-S_MENU  = "Menu"
-S_PARAM = "Paramètres"
-S_MEDIA = "Media"
-
-# ── STYLES (petit relooking) ─────────────────────────────────────────────────
+# ── STYLES ───────────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
-    .block-container {padding-top: 1.2rem; padding-bottom: 2rem; max-width: 1000px;}
-    .stButton>button {border-radius: 10px; padding: 0.6rem 1rem; font-weight: 600;}
-    .good {background:#E6FFED; border:1px solid #B7F5C0; padding:10px 12px; border-radius:8px;}
-    .soft {background:#F6F8FA; border:1px solid #E5E7EB; padding:10px 12px; border-radius:8px;}
-    .pill {display:inline-block; background:#EEF2FF; color:#374151; padding:2px 10px; border-radius:999px; font-size:12px; margin-left:6px;}
+  .block-container {padding-top: 1.1rem; padding-bottom: 2rem; max-width: 1000px;}
+  .stButton>button {border-radius: 10px; padding: 0.6rem 1rem; font-weight: 600;}
+  .good {background:#E6FFED; border:1px solid #B7F5C0; padding:10px 12px; border-radius:8px;}
+  .soft {background:#F6F8FA; border:1px solid #E5E7EB; padding:10px 12px; border-radius:8px;}
 </style>
 """, unsafe_allow_html=True)
 
-# ── AUTH & SERVICE ───────────────────────────────────────────────────────────
+# ── AUTH/SERVICE ─────────────────────────────────────────────────────────────
 @st.cache_resource
 def _creds():
     sa_info = st.secrets["GCP_SERVICE_ACCOUNT"]
@@ -56,8 +44,7 @@ def _sheet_id():
 # ── UTILS ────────────────────────────────────────────────────────────────────
 def _norm(s):
     if s is None: return ""
-    s = str(s)
-    s = unicodedata.normalize("NFKD", s)
+    s = unicodedata.normalize("NFKD", str(s))
     s = "".join(ch for ch in s if not unicodedata.combining(ch)).replace("\u00A0"," ")
     return " ".join(s.strip().lower().split())
 
@@ -69,18 +56,16 @@ def tel_link(number: str):
 def whatsapp_link(number: str, text=""):
     if not number: return
     n = "".join(ch for ch in str(number) if ch.isdigit())
-    url = f"https://wa.me/{n}"
-    if text: url += f"?text={urllib.parse.quote(text)}"
+    url = f"https://wa.me/{n}" + (f"?text={urllib.parse.quote(text)}" if text else "")
     st.markdown(f"[💬 WhatsApp {number}]({url})")
     if str(number).startswith("0") and not str(number).startswith("+"):
         st.caption("ℹ️ Pour WhatsApp, utilise le format international (ex. +2126…).")
 
 # ── SHEETS HELPERS ───────────────────────────────────────────────────────────
 def _get_range(sheet: str, rng: str="A1:ZZ100000"):
-    resp = _svc().spreadsheets().values().get(
+    return _svc().spreadsheets().values().get(
         spreadsheetId=_sheet_id(), range=f"{sheet}!{rng}"
-    ).execute()
-    return resp.get("values", [])
+    ).execute().get("values", [])
 
 def read_sheet_as_dicts(sheet: str):
     vals = _get_range(sheet)
@@ -108,18 +93,17 @@ def append_row(sheet: str, header: list[str], row: dict):
         body={"values":[[row.get(h, "") for h in header]]}
     ).execute()
 
-# ── DICTÉE VOCALE ────────────────────────────────────────────────────────────
+# ── DICTÉE VOCALE (safe f-string) ────────────────────────────────────────────
 def voice_dictation(key: str):
-    if key not in st.session_state:
-        st.session_state[key] = ""
+    if key not in st.session_state: st.session_state[key] = ""
     js = r"""
     <div>
-      <button id="start_{k}" style="padding:8px 12px;border-radius:8px;">🎙️ Démarrer/Stop</button>
-      <span id="status_{k}" style="margin-left:8px;color:#666;">Prêt</span>
+      <button id="start_{K}" style="padding:8px 12px;border-radius:8px;">🎙️ Démarrer/Stop</button>
+      <span id="status_{K}" style="margin-left:8px;color:#666;">Prêt</span>
       <script>
         function ok() {{ return ('webkitSpeechRecognition' in window) || ('SpeechRecognition' in window); }}
-        const s = document.getElementById("status_{k}");
-        const b = document.getElementById("start_{k}");
+        const s = document.getElementById("status_{K}");
+        const b = document.getElementById("start_{K}");
         if (!ok()) {{
           s.textContent = "Dictée non supportée par ce navigateur.";
         }} else {{
@@ -135,7 +119,7 @@ def voice_dictation(key: str):
             }}
             if (t) {{
               buf += t;
-              const msg = {{ type: "streamlit:setComponentValue", key: "{k}", value: buf }};
+              const msg = {{ type: "streamlit:setComponentValue", key: "{K}", value: buf }};
               window.parent.postMessage(msg, "*");
             }}
           }};
@@ -149,10 +133,11 @@ def voice_dictation(key: str):
         }}
       </script>
     </div>
-    """.replace("{k}", key)
+    """.replace("{K}", key)
     components.html(js, height=60)
     return st.session_state.get(key, "")
-# ── CACHE DES DONNÉES ────────────────────────────────────────────────────────
+
+# ── CACHE ────────────────────────────────────────────────────────────────────
 @st.cache_data
 def load_all():
     default_pat_header = [
@@ -169,31 +154,27 @@ def load_all():
     _, menu     = read_sheet_as_dicts(S_MENU)
     _, params   = read_sheet_as_dicts(S_PARAM)
     _, media    = read_sheet_as_dicts(S_MEDIA)
-    return {"patients":patients, "menu":menu, "params":params, "media":media,
-            "pat_header":default_pat_header}
+    return {"patients":patients, "menu":menu, "params":params,
+            "media":media, "pat_header":default_pat_header}
 
-# ── VUES ─────────────────────────────────────────────────────────────────────
+# ── VUE : RECHERCHE ──────────────────────────────────────────────────────────
 def view_search(data):
     st.subheader("🔍 Rechercher un patient")
     rows = list(data["patients"])
     if not rows:
-        st.info("Aucun patient pour l’instant. Ajoute le premier depuis l’onglet **➕ Ajouter**.")
+        st.info("Aucun patient. Ajoute le premier via l’onglet **➕ Ajouter**.")
         return
 
-    cols = list(rows[0].keys())
-    col_name  = "Nom du patient"
-    col_phone = "Numéro de téléphone"
-    col_date  = "Date de consultation"
-    col_patho = "Pathologie / Catégorie"
-    col_diag  = "Diagnostic"
-    col_tags  = "Tags"
-    col_prio  = "Priorité (Faible/Moyen/Urgent)"
+    col_name, col_phone = "Nom du patient", "Numéro de téléphone"
+    col_date, col_patho = "Date de consultation", "Pathologie / Catégorie"
+    col_diag, col_tags  = "Diagnostic", "Tags"
+    col_prio            = "Priorité (Faible/Moyen/Urgent)"
 
     q = st.text_input("Rechercher (nom, diagnostic, tags)")
     pathos = sorted({r.get(col_patho,"") for r in rows if r.get(col_patho)})
     patho = st.selectbox("Pathologie", ["— Toutes —"] + pathos)
-    prio = st.selectbox("Priorité", ["— Toutes —","Faible","Moyen","Urgent"])
-    sort = st.selectbox("Trier par", ["Date (récent)","Priorité","Nom"])
+    prio  = st.selectbox("Priorité", ["— Toutes —","Faible","Moyen","Urgent"])
+    sort  = st.selectbox("Trier par", ["Date (récent)","Priorité","Nom"])
 
     if q:
         qn = _norm(q)
@@ -226,45 +207,45 @@ def view_search(data):
     if who!="—":
         r = next(x for x in rows if x.get(col_name)==who)
         num = r.get(col_phone,"")
-        tel_link(num); whatsapp_link(num, text="Bonjour, c’est l’ophtalmologie.")
+        tel_link(num)
+        whatsapp_link(num, text="Bonjour, c’est l’ophtalmologie.")
 
+# ── VUE : AJOUT ──────────────────────────────────────────────────────────────
 def view_add(data):
     st.subheader("➕ Ajouter un patient")
 
     patho_choices = sorted({m.get("Pathologie / Catégorie","") for m in data["menu"] if m.get("Pathologie / Catégorie")}) \
                     or ["Glaucome","Réfraction","Cataracte","Rétine (DMLA/DR)","Urgences"]
-    prio_choices = ["Faible","Moyen","Urgent"]
-    consent_choices = ["Oui","Non"]
-    lieu_choices = ["Urgences","Consultation","Bloc"]
+    prio_choices     = ["Faible","Moyen","Urgent"]
+    consent_choices  = ["Oui","Non"]
+    lieu_choices     = ["Urgences","Consultation","Bloc"]
 
     with st.form("add_full"):
         c1, c2 = st.columns(2)
         with c1:
-            nom = st.text_input("Nom du patient")
+            nom   = st.text_input("Nom du patient")
             phone = st.text_input("Numéro de téléphone (format international, ex. +2126...)")
             datec = st.date_input("Date de consultation", value=date.today())
-            pathocat = st.selectbox("Pathologie / Catégorie", patho_choices)
-            prio = st.selectbox("Priorité (Faible/Moyen/Urgent)", prio_choices)
+            patho = st.selectbox("Pathologie / Catégorie", patho_choices)
+            prio  = st.selectbox("Priorité (Faible/Moyen/Urgent)", prio_choices)
             consent = st.selectbox("Consentement photo (Oui/Non)", consent_choices)
-            lieu = st.selectbox("Lieu (Urgences/Consultation/Bloc)", lieu_choices)
+            lieu  = st.selectbox("Lieu (Urgences/Consultation/Bloc)", lieu_choices)
         with c2:
-            diag = st.text_input("Diagnostic")
+            diag  = st.text_input("Diagnostic")
             notes = st.text_area("Notes dictées (transcription)", height=120, key="notes_text")
             st.caption("Ou utilise la dictée vocale ci-dessous :")
             _ = voice_dictation("notes_text")
-            suiv = st.date_input("Prochain rendez-vous / Suivi (date)", value=None)
-            tags = st.text_input("Tags (séparés par des virgules)")
-            img = st.file_uploader("Photo (optionnel)", type=["png","jpg","jpeg"])
+            suiv  = st.date_input("Prochain rendez-vous / Suivi (date)", value=None)
+            tags  = st.text_input("Tags (séparés par des virgules)")
+            img   = st.file_uploader("Photo (optionnel)", type=["png","jpg","jpeg"])
         ok = st.form_submit_button("Enregistrer")
 
         if ok:
             try:
-                # entête Patients (si fiche vide, on prend celle par défaut)
-                h_pat, _ = read_sheet_as_dicts(S_PAT)
+                h_pat, _rows = read_sheet_as_dicts(S_PAT)
                 if not h_pat:
                     h_pat = data["pat_header"]
 
-                # photo -> Media
                 photo_ref = ""
                 if img is not None:
                     ensure_headers(S_MEDIA, ["MediaID","Filename","MIME","B64"])
@@ -282,7 +263,7 @@ def view_add(data):
                     "Nom du patient": nom.strip(),
                     "Numéro de téléphone": phone.strip(),
                     "Date de consultation": datec.strftime("%Y-%m-%d"),
-                    "Pathologie / Catégorie": pathocat,
+                    "Pathologie / Catégorie": patho,
                     "Diagnostic": diag.strip(),
                     "Notes dictées (transcription)": (notes or "").strip(),
                     "Photo Ref": photo_ref,
@@ -295,43 +276,37 @@ def view_add(data):
                     "Dernière mise à jour": datetime.now().strftime("%Y-%m-%d %H:%M"),
                 }
                 append_row(S_PAT, h_pat, row)
-                st.success("✅ Enregistré (persistance Google Sheets).")
+                st.success("✅ Enregistré (Google Sheets).")
                 st.cache_data.clear(); st.rerun()
             except Exception as e:
                 st.error(f"Échec enregistrement: {e}")
 
+# ── VUE : EXPORT ─────────────────────────────────────────────────────────────
 def _csv_bytes(header, dict_rows):
-    sio = io.StringIO()
-    w = csv.writer(sio)
+    sio = io.StringIO(); w = csv.writer(sio)
     w.writerow(header)
     for r in dict_rows:
         w.writerow([r.get(h,"") for h in header])
     return sio.getvalue().encode("utf-8")
 
 def view_export(data):
-    st.subheader("📤 Export")
-    st.markdown('<div class="soft">Télécharge tes données pour un backup local.</div>', unsafe_allow_html=True)
+    st.subheader("📤 Export des données")
+    st.markdown('<div class="soft">Télécharge un backup local.</div>', unsafe_allow_html=True)
 
-    # Patients
-    pat_header = data["pat_header"]
-    pat_rows = data["patients"]
-    pat_csv = _csv_bytes(pat_header, pat_rows)
-    st.download_button("⬇️ Patients (CSV)", pat_csv, file_name="patients.csv", mime="text/csv")
+    pat_header = data["pat_header"]; pat_rows = data["patients"]
+    st.download_button("⬇️ Patients (CSV)", _csv_bytes(pat_header, pat_rows),
+                       file_name="patients.csv", mime="text/csv")
 
-    # Media
-    media_header = ["MediaID","Filename","MIME","B64"]
-    media_rows = data["media"]
-    media_csv = _csv_bytes(media_header, media_rows)
-    st.download_button("⬇️ Media (CSV)", media_csv, file_name="media.csv", mime="text/csv")
+    media_header = ["MediaID","Filename","MIME","B64"]; media_rows = data["media"]
+    st.download_button("⬇️ Media (CSV)", _csv_bytes(media_header, media_rows),
+                       file_name="media.csv", mime="text/csv")
 
-    # Export JSON global
     bundle = {"patients": pat_rows, "media": media_rows, "exported_at": datetime.now().isoformat()}
     st.download_button("⬇️ Tout (JSON)", json.dumps(bundle, ensure_ascii=False).encode("utf-8"),
                        file_name="ophtadossier_export.json", mime="application/json")
 
 # ── MAIN ─────────────────────────────────────────────────────────────────────
 def main():
-    st.set_page_config(page_title=APP_TITLE, layout="wide")
     st.title(APP_TITLE)
     try:
         _ = _sheet_id()
@@ -340,7 +315,6 @@ def main():
         st.error(f"Erreur d’authentification/accès: {e}")
         return
 
-    # MENU latéral
     st.sidebar.title("Menu")
     choice = st.sidebar.radio("Navigation", ["🔍 Rechercher", "➕ Ajouter", "📤 Export"])
 
