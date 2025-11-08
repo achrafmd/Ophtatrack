@@ -1,25 +1,23 @@
 # ──────────────────────────────────────────────────────────────────────────────
-# OphtaDossier — Google Sheets + Google Drive (multi-photos, nommage patient)
+# OphtaDossier — Google Sheets + Supabase Storage (multi-photos, privé)
 # Menu: 🔍 Rechercher | ➕ Ajouter | 📤 Export
-# Persistance : Google Sheets API (values.get/append)
-# Photos : Google Drive (1 ligne par photo dans onglet Media)
+# Photos: Supabase Storage (1 ligne par photo dans onglet Media, URL signée)
 # Dictée vocale, Appel/WhatsApp
 # ──────────────────────────────────────────────────────────────────────────────
 
 import re, unicodedata, urllib.parse, uuid, io, csv, json
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 import streamlit as st
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
-from googleapiclient.http import MediaIoBaseUpload
 import streamlit.components.v1 as components
+from supabase import create_client, Client
 
-# IMPORTANT : premier appel Streamlit
+# IMPORTANT : set_page_config d'abord
 st.set_page_config(page_title="OphtaDossier — Suivi patients", layout="wide")
 
 APP_TITLE = "OphtaDossier — Suivi patients"
 S_PAT, S_MENU, S_PARAM, S_MEDIA = "Patients", "Menu", "Paramètres", "Media"
-DEFAULT_DRIVE_FOLDER_NAME = "OphtaDossier_Media"
 
 # ── STYLES ───────────────────────────────────────────────────────────────────
 st.markdown("""
@@ -35,11 +33,7 @@ st.markdown("""
 @st.cache_resource
 def _creds(scopes=None):
     if scopes is None:
-        scopes = [
-            "https://www.googleapis.com/auth/spreadsheets",
-            "https://www.googleapis.com/auth/drive.file",
-            "https://www.googleapis.com/auth/drive.metadata.readonly",
-        ]
+        scopes = ["https://www.googleapis.com/auth/spreadsheets"]
     sa_info = st.secrets["GCP_SERVICE_ACCOUNT"]
     return Credentials.from_service_account_info(sa_info, scopes=scopes)
 
@@ -48,8 +42,10 @@ def _svc_sheets():
     return build("sheets", "v4", credentials=_creds(), cache_discovery=False)
 
 @st.cache_resource
-def _svc_drive():
-    return build("drive", "v3", credentials=_creds(), cache_discovery=False)
+def _supabase() -> Client:
+    url = st.secrets["SUPABASE_URL"]
+    key = st.secrets["SUPABASE_ANON_KEY"]
+    return create_client(url, key)
 
 def _sheet_id():
     url = st.secrets["SHEET_URL"]
@@ -89,6 +85,12 @@ def make_photo_basename(nom_patient: str, date_consult, diagnostic: str) -> str:
     diag = _slug(diagnostic) or "ND"
     return f"{nom}_{date_txt}_{diag}"
 
+def _ext_for(filename: str, mimetype: str) -> str:
+    if "png" in (mimetype or ""): return ".png"
+    if "jpeg" in (mimetype or "") or "jpg" in (mimetype or ""): return ".jpg"
+    m = re.search(r"\.(png|jpg|jpeg)$", filename or "", re.IGNORECASE)
+    return f".{m.group(1).lower()}" if m else ".jpg"
+
 # ── SHEETS HELPERS ───────────────────────────────────────────────────────────
 def _get_range(sheet: str, rng: str="A1:ZZ100000"):
     return _svc_sheets().spreadsheets().values().get(
@@ -121,65 +123,49 @@ def append_row(sheet: str, header: list[str], row: dict):
         body={"values":[[row.get(h, "") for h in header]]}
     ).execute()
 
-# ── DRIVE HELPERS ────────────────────────────────────────────────────────────
-def _get_or_create_folder_id():
-    folder_id = st.secrets.get("DRIVE_FOLDER_ID", "").strip()
-    if folder_id:
-        return folder_id
-    # fallback : créer dans le Drive du service account
-    name = DEFAULT_DRIVE_FOLDER_NAME
-    drive = _svc_drive()
-    q = f"name = '{name}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
-    resp = drive.files().list(q=q, spaces="drive", fields="files(id, name)", pageSize=10).execute()
-    files = resp.get("files", [])
-    if files:
-        return files[0]["id"]
-    meta = {"name": name, "mimeType": "application/vnd.google-apps.folder"}
-    newf = drive.files().create(body=meta, fields="id").execute()
-    return newf["id"]
+# ── SUPABASE STORAGE HELPERS ────────────────────────────────────────────────
+def _sb_bucket():
+    name = st.secrets.get("SUPABASE_BUCKET", "").strip()
+    if not name:
+        st.error("⚠️ SUPABASE_BUCKET manquant dans les secrets.")
+        st.stop()
+    return name
 
-def upload_many_images_to_drive(files, folder_id: str, base_name: str):
+def sb_upload_many(files, base_name: str, url_ttl_days: int = 365):
     """
-    Upload plusieurs images vers Drive avec nommage contrôlé:
-    <base_name>_<index>.<ext>
-    Écrit 1 ligne par photo dans l’onglet Media (sans base64).
-    Retourne la liste des refs 'DRIVE:<fileId>'.
+    Upload plusieurs images dans Supabase Storage (bucket privé):
+     - objet = photos/<base_name>_<index>.<ext>
+     - écrit 1 ligne par photo dans Media: (MediaID, Filename, MIME, SBPath, SignedURL)
+    Retourne la liste des refs 'SB:<path>'.
     """
-    ensure_headers(S_MEDIA, ["MediaID","Filename","MIME","DriveFileID","DriveLink"])
-    drive = _svc_drive()
+    ensure_headers(S_MEDIA, ["MediaID","Filename","MIME","SBPath","SignedURL"])
+    sb = _supabase()
+    bucket = _sb_bucket()
     refs = []
-
-    def _ext_for(f):
-        mt = getattr(f, "type", "") or ""
-        if "png" in mt: return ".png"
-        if "jpeg" in mt or "jpg" in mt: return ".jpg"
-        name = getattr(f, "name", "") or ""
-        m = re.search(r"\.(png|jpg|jpeg)$", name, re.IGNORECASE)
-        return f".{m.group(1).lower()}" if m else ".jpg"
 
     for i, f in enumerate(files, start=1):
         raw = f.read()
-        bio = io.BytesIO(raw); bio.seek(0)
-        mime = getattr(f, "type", None) or "image/jpeg"
-        ext  = _ext_for(f)
-        fname = f"{base_name}_{i}{ext}"
+        mimetype = getattr(f, "type", None) or "image/jpeg"
+        fname = getattr(f, "name", None) or "photo.jpg"
+        ext = _ext_for(fname, mimetype)
+        path = f"photos/{base_name}_{i}{ext}"
 
-        media = MediaIoBaseUpload(bio, mimetype=mime, resumable=False)
-        meta  = {"name": fname, "parents": [folder_id]}
-        created = drive.files().create(body=meta, media_body=media,
-                                       fields="id, webViewLink").execute()
-        file_id = created.get("id")
-        link    = created.get("webViewLink") or f"https://drive.google.com/file/d/{file_id}/view"
+        # upload (upsert True pour écraser si même nom)
+        sb.storage.from_(bucket).upload(path=path, file=raw, file_options={"content-type": mimetype}, upsert=True)
+
+        # URL signée (privée)
+        expires = url_ttl_days * 24 * 3600
+        signed = sb.storage.from_(bucket).create_signed_url(path, expires_in=expires)["signedURL"]
 
         media_row = {
             "MediaID": uuid.uuid4().hex[:10],
-            "Filename": fname,
-            "MIME": mime,
-            "DriveFileID": file_id,
-            "DriveLink": link
+            "Filename": f"{base_name}_{i}{ext}",
+            "MIME": mimetype,
+            "SBPath": f"{bucket}/{path}",
+            "SignedURL": signed
         }
-        append_row(S_MEDIA, ["MediaID","Filename","MIME","DriveFileID","DriveLink"], media_row)
-        refs.append(f"DRIVE:{file_id}")
+        append_row(S_MEDIA, ["MediaID","Filename","MIME","SBPath","SignedURL"], media_row)
+        refs.append(f"SB:{bucket}/{path}")
 
     return refs
 
@@ -237,7 +223,7 @@ def load_all():
         "Consentement photo (Oui/Non)","Lieu (Urgences/Consultation/Bloc)",
         "Tags","Créé le","Dernière mise à jour"
     ]
-    ensure_headers(S_MEDIA, ["MediaID","Filename","MIME","DriveFileID","DriveLink"])
+    ensure_headers(S_MEDIA, ["MediaID","Filename","MIME","SBPath","SignedURL"])
     ensure_headers(S_PAT, default_pat_header)
 
     _, patients = read_sheet_as_dicts(S_PAT)
@@ -297,8 +283,7 @@ def view_search(data):
     if who!="—":
         r = next(x for x in rows if x.get(col_name)==who)
         num = r.get(col_phone,"")
-        tel_link(num)
-        whatsapp_link(num, text="Bonjour, c’est l’ophtalmologie.")
+        tel_link(num); whatsapp_link(num, text="Bonjour, c’est l’ophtalmologie.")
 
 def view_add(data):
     st.subheader("➕ Ajouter un patient")
@@ -345,16 +330,14 @@ def view_add(data):
                         "Tags","Créé le","Dernière mise à jour"
                     ]
 
-                # 1) Upload multi-photos vers Drive (noms = Nom_Date_Diagnostic_index.ext)
+                # Upload multi-photos → Supabase (noms = Nom_Date_Diagnostic_index.ext)
                 photo_ref = ""
                 if img:
                     files = img if isinstance(img, list) else [img]
-                    folder_id = st.secrets.get("DRIVE_FOLDER_ID", "").strip() or _get_or_create_folder_id()
                     base_name = make_photo_basename(nom, datec, diag)
-                    refs = upload_many_images_to_drive(files, folder_id, base_name)  # "DRIVE:<id>" x N
+                    refs = sb_upload_many(files, base_name, url_ttl_days=365)  # "SB:<bucket>/photos/..."
                     photo_ref = ";".join(refs)
 
-                # 2) Append la fiche patient
                 row = {
                     "ID": uuid.uuid4().hex[:8],
                     "Nom du patient": nom.strip(),
@@ -373,7 +356,7 @@ def view_add(data):
                     "Dernière mise à jour": datetime.now().strftime("%Y-%m-%d %H:%M"),
                 }
                 append_row(S_PAT, h_pat, row)
-                st.success("✅ Enregistré (Google Sheets + Drive).")
+                st.success("✅ Enregistré (Google Sheets + Supabase).")
                 st.cache_data.clear(); st.rerun()
             except Exception as e:
                 st.error(f"Échec enregistrement: {e}")
@@ -398,7 +381,7 @@ def view_export(data):
     st.download_button("⬇️ Patients (CSV)", _csv_bytes(pat_header, pat_rows),
                        file_name="patients.csv", mime="text/csv")
 
-    media_header = ["MediaID","Filename","MIME","DriveFileID","DriveLink"]
+    media_header = ["MediaID","Filename","MIME","SBPath","SignedURL"]
     media_rows = data["media"]
     st.download_button("⬇️ Media (CSV)", _csv_bytes(media_header, media_rows),
                        file_name="media.csv", mime="text/csv")
@@ -412,9 +395,9 @@ def main():
     st.title(APP_TITLE)
     try:
         _ = _sheet_id()
-        st.markdown('<div class="good">Connexion OK au tableur.</div>', unsafe_allow_html=True)
-        fid = st.secrets.get("DRIVE_FOLDER_ID", "").strip() or _get_or_create_folder_id()
-        st.caption(f"Dossier Drive prêt (ID: {fid[:8]}…)")
+        sb = _supabase()
+        st.markdown('<div class="good">Connexion OK (Sheets + Supabase Storage).</div>', unsafe_allow_html=True)
+        st.caption(f"Bucket Supabase: {st.secrets['SUPABASE_BUCKET']}")
     except Exception as e:
         st.error(f"Erreur d’authentification/accès: {e}")
         return
