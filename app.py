@@ -144,23 +144,39 @@ def sb_upload_many(files, base_name: str, url_ttl_days: int = 365):
     refs = []
 
     for i, f in enumerate(files, start=1):
-        raw = f.read()
+        # Lecture binaire sécurisée
+        try:
+            raw = f.read()
+            if not isinstance(raw, (bytes, bytearray)):
+                raise ValueError(f"Le fichier {f.name} n’a pas pu être lu correctement.")
+        except Exception as e:
+            st.error(f"Erreur lecture {getattr(f, 'name', 'fichier inconnu')}: {e}")
+            continue
+
         mimetype = getattr(f, "type", None) or "image/jpeg"
         fname = getattr(f, "name", None) or "photo.jpg"
         ext = _ext_for(fname, mimetype)
         path = f"photos/{base_name}_{i}{ext}"
 
-        # upload (v2: upsert dans file_options, et contentType en camelCase)
-        sb.storage.from_(bucket).upload(
-            path=path,
-            file=raw,
-            file_options={"contentType": mimetype, "upsert": True}
-        )
+        # Upload Supabase (v2: file_options contient contentType et upsert)
+        try:
+            sb.storage.from_(bucket).upload(
+                path=path,
+                file=io.BytesIO(raw),  # ✅ doit être un flux binaire
+                file_options={"contentType": mimetype, "upsert": True}
+            )
+        except Exception as e:
+            st.error(f"Erreur upload Supabase {path}: {e}")
+            continue
 
         # URL signée (privée)
         expires = url_ttl_days * 24 * 3600
-        res = sb.storage.from_(bucket).create_signed_url(path, expires_in=expires)
-        signed = res.get("signedURL") or res.get("signed_url")
+        try:
+            res = sb.storage.from_(bucket).create_signed_url(path, expires_in=expires)
+            signed = res.get("signedURL") or res.get("signed_url")
+        except Exception as e:
+            st.warning(f"URL signée non générée pour {path}: {e}")
+            signed = ""
 
         media_row = {
             "MediaID": uuid.uuid4().hex[:10],
@@ -173,7 +189,6 @@ def sb_upload_many(files, base_name: str, url_ttl_days: int = 365):
         refs.append(f"SB:{bucket}/{path}")
 
     return refs
-
 # ── CACHE ────────────────────────────────────────────────────────────────────
 @st.cache_data
 def load_all():
