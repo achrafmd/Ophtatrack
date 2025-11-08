@@ -158,11 +158,11 @@ def sb_upload_many(files, base_name: str, url_ttl_days: int = 365):
         ext = _ext_for(fname, mimetype)
         path = f"photos/{base_name}_{i}{ext}"
 
-        # Upload Supabase (v2: file_options contient contentType et upsert)
+        # ✅ Upload direct (bytes)
         try:
             sb.storage.from_(bucket).upload(
                 path=path,
-                file=io.BytesIO(raw),  # ✅ doit être un flux binaire
+                file=raw,  # ✅ bytes directement
                 file_options={"contentType": mimetype, "upsert": True}
             )
         except Exception as e:
