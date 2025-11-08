@@ -2,7 +2,8 @@
 # OphtaDossier — Google Sheets + Supabase Storage (multi-photos, privé)
 # Menu: 🔍 Rechercher | ➕ Ajouter | 📤 Export
 # Photos: Supabase Storage (1 ligne par photo dans onglet Media, URL signée)
-# Dictée vocale, Appel/WhatsApp
+# Nommage photo: NomPatient_YYYY-MM-DD_Diagnostic_index.ext
+# Dictée vocale retirée (tu utilises la transcription iPhone)
 # ──────────────────────────────────────────────────────────────────────────────
 
 import re, unicodedata, urllib.parse, uuid, io, csv, json
@@ -10,7 +11,6 @@ from datetime import date, datetime, timedelta
 import streamlit as st
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
-import streamlit.components.v1 as components
 from supabase import create_client, Client
 
 # IMPORTANT : set_page_config d'abord
@@ -70,7 +70,7 @@ def whatsapp_link(number: str, text=""):
     url = f"https://wa.me/{n}" + (f"?text={urllib.parse.quote(text)}" if text else "")
     st.markdown(f"[💬 WhatsApp {number}]({url})")
     if str(number).startswith("0") and not str(number).startswith("+"):
-        st.caption("ℹ️ Pour WhatsApp, utilise le format international (ex. +2126…).")
+        st.caption("ℹ️ WhatsApp: utilise le format international (ex. +2126…).")
 
 # Nommage des photos : Nom_Date_Diagnostic_index.ext
 def _slug(s: str) -> str:
@@ -136,7 +136,7 @@ def sb_upload_many(files, base_name: str, url_ttl_days: int = 365):
     Upload plusieurs images dans Supabase Storage (bucket privé):
      - objet = photos/<base_name>_<index>.<ext>
      - écrit 1 ligne par photo dans Media: (MediaID, Filename, MIME, SBPath, SignedURL)
-    Retourne la liste des refs 'SB:<path>'.
+    Retourne la liste des refs 'SB:<bucket>/photos/...'
     """
     ensure_headers(S_MEDIA, ["MediaID","Filename","MIME","SBPath","SignedURL"])
     sb = _supabase()
@@ -150,12 +150,17 @@ def sb_upload_many(files, base_name: str, url_ttl_days: int = 365):
         ext = _ext_for(fname, mimetype)
         path = f"photos/{base_name}_{i}{ext}"
 
-        # upload (upsert True pour écraser si même nom)
-        sb.storage.from_(bucket).upload(path=path, file=raw, file_options={"content-type": mimetype}, upsert=True)
+        # upload (v2: upsert dans file_options, et contentType en camelCase)
+        sb.storage.from_(bucket).upload(
+            path=path,
+            file=raw,
+            file_options={"contentType": mimetype, "upsert": True}
+        )
 
         # URL signée (privée)
         expires = url_ttl_days * 24 * 3600
-        signed = sb.storage.from_(bucket).create_signed_url(path, expires_in=expires)["signedURL"]
+        res = sb.storage.from_(bucket).create_signed_url(path, expires_in=expires)
+        signed = res.get("signedURL") or res.get("signed_url")
 
         media_row = {
             "MediaID": uuid.uuid4().hex[:10],
@@ -168,50 +173,6 @@ def sb_upload_many(files, base_name: str, url_ttl_days: int = 365):
         refs.append(f"SB:{bucket}/{path}")
 
     return refs
-
-# ── DICTÉE VOCALE (safe f-string) ────────────────────────────────────────────
-def voice_dictation(key: str):
-    if key not in st.session_state: st.session_state[key] = ""
-    js = r"""
-    <div>
-      <button id="start_{K}" style="padding:8px 12px;border-radius:8px;">🎙️ Démarrer/Stop</button>
-      <span id="status_{K}" style="margin-left:8px;color:#666;">Prêt</span>
-      <script>
-        function ok() {{ return ('webkitSpeechRecognition' in window) || ('SpeechRecognition' in window); }}
-        const s = document.getElementById("status_{K}");
-        const b = document.getElementById("start_{K}");
-        if (!ok()) {{
-          s.textContent = "Dictée non supportée par ce navigateur.";
-        }} else {{
-          const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-          const rec = new SR();
-          rec.continuous = true; rec.interimResults = true; rec.lang = "fr-FR";
-          let run = false, buf = "";
-          rec.onresult = (e) => {{
-            let t = "";
-            for (let i = e.resultIndex; i < e.results.length; i++) {{
-              const r = e.results[i];
-              if (r.isFinal) t += r[0].transcript + " ";
-            }}
-            if (t) {{
-              buf += t;
-              const msg = {{ type: "streamlit:setComponentValue", key: "{K}", value: buf }};
-              window.parent.postMessage(msg, "*");
-            }}
-          }};
-          rec.onstart = () => s.textContent = "Écoute…";
-          rec.onerror = () => s.textContent = "Erreur micro (autorise l'accès).";
-          rec.onend = () => {{ s.textContent = "Arrêté"; run = false; }};
-          b.onclick = () => {{
-            if (!run) {{ rec.start(); run = true; s.textContent = "Démarré"; }}
-            else      {{ rec.stop();  run = false; s.textContent = "Arrêté";  }}
-          }};
-        }}
-      </script>
-    </div>
-    """.replace("{K}", key)
-    components.html(js, height=60)
-    return st.session_state.get(key, "")
 
 # ── CACHE ────────────────────────────────────────────────────────────────────
 @st.cache_data
@@ -307,8 +268,6 @@ def view_add(data):
         with c2:
             diag  = st.text_input("Diagnostic")
             notes = st.text_area("Notes dictées (transcription)", height=120, key="notes_text")
-            st.caption("Ou utilise la dictée vocale ci-dessous :")
-            _ = voice_dictation("notes_text")
             suiv  = st.date_input("Prochain rendez-vous / Suivi (date)", value=None)
             tags  = st.text_input("Tags (séparés par des virgules)")
             img   = st.file_uploader(
@@ -395,7 +354,7 @@ def main():
     st.title(APP_TITLE)
     try:
         _ = _sheet_id()
-        sb = _supabase()
+        _ = _supabase()
         st.markdown('<div class="good">Connexion OK (Sheets + Supabase Storage).</div>', unsafe_allow_html=True)
         st.caption(f"Bucket Supabase: {st.secrets['SUPABASE_BUCKET']}")
     except Exception as e:
