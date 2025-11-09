@@ -11,6 +11,11 @@ def _configure_page():
     st.markdown(
         """
 <style>
+@keyframes slideInLeft { from { opacity:.25; transform:translateX(28px) } to { opacity:1; transform:none } }
+@keyframes slideInRight{ from { opacity:.25; transform:translateX(-28px)} to { opacity:1; transform:none } }
+.appwrap{ animation-duration:.28s; animation-fill-mode:both }
+</style>
+<style>
 :root{
   --blue:#2E80F0; --blue-600:#1E62C9;
   --bg:#F6FAFF; --card:#FFFFFF; --glass:rgba(255,255,255,.90);
@@ -127,31 +132,37 @@ def _signed_url(key: str, days=365) -> str:
     except Exception:
         return ""
 
-def upload_many(files, base_name: str):
-    """Upload dans storage sous: public/{uid}/...  → retourne [{key,url}]."""
+def clean_filename(text: str) -> str:
+    import unicodedata, re
+    text = unicodedata.normalize("NFKD", text or "").encode("ascii","ignore").decode("ascii")
+    return re.sub(r"[^A-Za-z0-9._-]+", "_", text).strip("_")
+
+def upload_many(files, base_name: str, owner_uid: str):
     out = []
-    if not files: return out
-    try:
-        uid = (sb.auth.get_user().user.id) or "anon"
-    except Exception:
-        uid = "anon"
-    safe = _slug(base_name)
+    if not files:
+        return out
+    safe = clean_filename(base_name)
+    bucket = st.secrets.get("SUPABASE_BUCKET", "Ophtadossier")
+    uid = owner_uid or "anon"
+
     for i, f in enumerate(files):
         try:
             raw = f.read()
             ext = (f.name.split(".")[-1] or "jpg").lower()
             key = f"public/{uid}/{uuid.uuid4().hex[:6]}_{safe}_{i+1}.{ext}"
             try:
-                sb.storage.from_(BUCKET).upload(key, raw, {"contentType": f.type or "image/jpeg"})
+                sb.storage.from_(bucket).upload(key, raw, {"contentType": f.type or "image/jpeg"})
             except Exception:
-                try: sb.storage.from_(BUCKET).remove([key])
+                try: sb.storage.from_(bucket).remove([key])
                 except Exception: pass
-                sb.storage.from_(BUCKET).upload(key, raw, {"contentType": f.type or "image/jpeg"})
-            out.append({"key": key, "url": _signed_url(key)})
+                sb.storage.from_(bucket).upload(key, raw, {"contentType": f.type or "image/jpeg"})
+            # URL signée
+            signed = sb.storage.from_(bucket).create_signed_url(key, 60*60*24*365)
+            url = signed.get("signedURL") or signed.get("signed_url") or ""
+            out.append({"key": key, "url": url})
         except Exception as e:
             st.error(f"Erreur upload {getattr(f,'name','(fichier)')} : {e}")
     return out
-
 def delete_photo(key: str) -> bool:
     try:
         sb.storage.from_(BUCKET).remove([key]); return True
