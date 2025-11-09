@@ -1,12 +1,12 @@
-# app.py — OphtaDossier (version mobile “native” avec barre d’onglets)
-# -------------------------------------------------------------------
+# app.py — OphtaDossier (mobile “native” avec barre d’onglets)
 # Onglets fixes en bas: ➕ Ajouter | 🔎 Patients | 📆 Agenda | 📤 Export
 
 from __future__ import annotations
 import streamlit as st
 import pandas as pd
 from datetime import date, datetime, timedelta
-import unicodedata, re, uuid
+import unicodedata, re, uuid, os
+from typing import List, Dict, Any, Optional
 
 from supabase import create_client
 
@@ -15,7 +15,7 @@ from supabase import create_client
 def configure_page():
     st.set_page_config(page_title="OphtaDossier", layout="wide")
 
-    # Palette & styles iPhone
+    # Palette & styles iPhone (médical bleu clair)
     st.markdown("""
 <style>
 :root{
@@ -25,61 +25,56 @@ def configure_page():
 
 /* Reset Streamlit chrome pour effet app */
 header, footer, [data-testid="stStatusWidget"], [data-testid="stToolbar"] { display:none !important; }
-section.main > div { padding-top: .5rem !important; padding-bottom: 5.5rem !important; } /* place pour la navbar */
-html, body { background: var(--bg); color: var(--text); overflow-x:hidden; }
-*, input, textarea { font-size: 16px !important; } /* lisible sur iPhone */
+section.main > div { padding-top:.5rem !important; padding-bottom:5.5rem !important; }
+html, body { background:var(--bg); color:var(--text); overflow-x:hidden; }
+*, input, textarea { font-size:16px !important; } /* lisible sur iPhone */
 
 /* Boutons tactiles */
 .stButton > button{
-  background: var(--primary);
-  color: #fff; border: none; border-radius: 12px;
-  padding: 12px 16px; font-weight: 600;
-  box-shadow: 0 4px 12px rgba(76,139,245,.20);
-  transition: transform .08s ease-in;
+  background:var(--primary);
+  color:#fff; border:none; border-radius:12px;
+  padding:12px 16px; font-weight:600;
+  box-shadow:0 4px 12px rgba(76,139,245,.20);
+  transition:transform .08s ease-in;
 }
-.stButton > button:active { transform: scale(.98); }
-.stButton > button:hover { background: var(--primary-600); }
+.stButton > button:active { transform:scale(.98); }
+.stButton > button:hover { background:var(--primary-600); }
 
 /* Inputs */
 .stTextInput input, .stTextArea textarea, .stDateInput input,
 .stSelectbox [role="combobox"], .stMultiSelect [role="combobox"] {
   background:#fff !important; border:1px solid var(--border) !important;
-  border-radius: 10px !important; padding: 12px 12px !important;
+  border-radius:10px !important; padding:12px 12px !important;
 }
 
-/* Tabs / chips */
-.stRadio [role="radiogroup"] { gap: 10px; flex-wrap: wrap; }
-.stRadio [data-baseweb="radio"] { padding: 6px 10px; background:#fff; border:1px solid var(--border);
-  border-radius: 12px; }
-.stRadio [aria-checked="true"] { border-color: var(--primary); box-shadow: 0 0 0 2px rgba(76,139,245,.15); }
+/* Radio chips */
+.stRadio [role="radiogroup"] { gap:10px; flex-wrap:wrap; }
+.stRadio [data-baseweb="radio"] { padding:6px 10px; background:#fff; border:1px solid var(--border);
+  border-radius:12px; }
+.stRadio [aria-checked="true"] { border-color:var(--primary); box-shadow:0 0 0 2px rgba(76,139,245,.15); }
 
 /* Cards */
 .card{
-  background: var(--card); border:1px solid var(--border);
-  border-radius: 14px; padding: 14px; margin: 10px 0;
-  box-shadow: 0 2px 6px rgba(0,0,0,.04);
+  background:var(--card); border:1px solid var(--border);
+  border-radius:14px; padding:14px; margin:10px 0;
+  box-shadow:0 2px 6px rgba(0,0,0,.04);
 }
-.consult-card{ composes: card; } /* (indication) */
-
-/* Galerie images */
-.photo-grid img { border-radius: 8px; }
 
 /* Barre d’onglets iOS */
 .navbar{
-  position: fixed; left:0; right:0; bottom:0; z-index: 1000;
+  position:fixed; left:0; right:0; bottom:0; z-index:1000;
   background:#fff; border-top:1px solid var(--border);
-  display:flex; justify-content: space-around; padding: 8px 6px;
+  display:flex; justify-content:space-around; padding:8px 6px;
 }
 .navbtn{
   flex:1; text-align:center; text-decoration:none !important; color:#334155 !important;
   font-weight:700; border-radius:12px; padding:8px 6px;
 }
+.navbtn .ico { font-size:20px; display:block; }
 .navbtn[aria-current="page"]{
-  color:#fff !important; background: var(--primary);
-  box-shadow: 0 6px 16px rgba(76,139,245,.25);
+  color:#fff !important; background:var(--primary);
+  box-shadow:0 6px 16px rgba(76,139,245,.25);
 }
-/* Icônes un peu plus grandes */
-.navbtn .ico { font-size: 20px; display:block; }
 </style>
     """, unsafe_allow_html=True)
 
@@ -87,8 +82,9 @@ configure_page()
 
 # ===================== SUPABASE =====================
 
-SUPABASE_URL = "https://upbbxujsuxduhwaxpnqe.supabase.co"
-SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVwYmJ4dWpzdXhkdWh3YXhwbnFlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjI2MzYyNDgsImV4cCI6MjA3ODIxMjI0OH0.crTLWlZPgV01iDk98EMkXwhmXQASuFfjZ9HMQvcNCrs"
+# Si tu préfères les secrets :
+SUPABASE_URL = st.secrets.get("SUPABASE_URL", "https://upbbxujsuxduhwaxpnqe.supabase.co")
+SUPABASE_KEY = st.secrets.get("SUPABASE_ANON_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVwYmJ4dWpzdXhkdWh3YXhwbnFlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjI2MzYyNDgsImV4cCI6MjA3ODIxMjI0OH0.crTLWlZPgV01iDk98EMkXwhmXQASuFfjZ9HMQvcNCrs")
 BUCKET = "Ophtadossier"  # respecter la casse exacte
 
 sb = create_client(SUPABASE_URL, SUPABASE_KEY)
@@ -97,31 +93,35 @@ sb = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 def clean_filename(text: str) -> str:
     text = unicodedata.normalize("NFKD", text or "").encode("ascii", "ignore").decode("ascii")
-    return re.sub(r"[^A-Za-z0-9._-]+", "_", text).strip("_")
+    return re.sub(r"[^A-Za-z0-9._/-]+", "_", text).strip("_")
 
-def sb_signed_url(key: str, days: int=365) -> str:
+def public_url(key: str) -> str:
     try:
-        res = sb.storage.from_(BUCKET).create_signed_url(key, 60*60*24*days)
-        return res.get("signedURL") or res.get("signed_url") or ""
+        # bucket public => URL publique directe
+        return sb.storage.from_(BUCKET).get_public_url(key)
     except Exception:
         return ""
 
-def upload_many(files, base_name: str):
-    out = []
+def upload_many(files, base_name: str) -> List[dict]:
+    """Upload multiple images to Storage -> return [{'key','url'}]."""
+    out: List[dict] = []
     if not files:
         return out
-    safe = clean_filename(base_name)
-    for i, f in enumerate(files):
+    base = f"photos/{clean_filename(base_name)}"
+    for i, f in enumerate(files, start=1):
         try:
             raw = f.read()
-            ext = (f.name.split(".")[-1] or "jpg").lower()
-            key = f"{safe}_{i+1}.{ext}"
+            # robustesse extension/MIME
+            ext = "." + (f.name.split(".")[-1] or "jpg").lower()
+            if ext not in [".jpg",".jpeg",".png"]: ext = ".jpg"
+            key = f"{base}_{i}{ext}"
+            mime = f.type or ("image/png" if ext==".png" else "image/jpeg")
             sb.storage.from_(BUCKET).upload(
                 path=key,
                 file=raw,
-                file_options={"contentType": f.type or "image/jpeg", "upsert": "true"},
+                file_options={"contentType": mime, "upsert": True},
             )
-            out.append({"key": key, "url": sb_signed_url(key)})
+            out.append({"key": key, "url": public_url(key)})
         except Exception as e:
             st.error(f"Erreur upload {getattr(f,'name','(fichier)')} : {e}")
     return out
@@ -167,10 +167,38 @@ def delete_consult(cid: str):
 
 @st.cache_data(ttl=30)
 def get_events(start_d: date | None = None, end_d: date | None = None):
+    """Retourne événements **et** consultations de la période (vue globale)."""
+    # Événements classiques
     q = sb.table("events").select("*")
     if start_d: q = q.gte("start_date", str(start_d))
     if end_d:   q = q.lte("start_date", str(end_d))
-    return (q.order("start_date").execute().data) or []
+    events = (q.order("start_date").execute().data) or []
+
+    # Consultations dans la période
+    cq = sb.table("consultations").select("id,patient_id,date_consult,lieu,pathologie,note,prochain_rdv")
+    if start_d: cq = cq.gte("date_consult", str(start_d))
+    if end_d:   cq = cq.lte("date_consult", str(end_d))
+    cons = (cq.order("date_consult").execute().data) or []
+
+    # Map patient -> nom pour l’affichage
+    pts_map: Dict[str,str] = {}
+    if cons:
+        pids = list({c["patient_id"] for c in cons})
+        if pids:
+            rows = sb.table("patients").select("id,nom").in_("id", pids).execute().data or []
+            pts_map = {r["id"]: r["nom"] for r in rows}
+
+    for c in cons:
+        events.append({
+            "id": f"CONS-{c['id']}",
+            "title": f"Consult {pts_map.get(c['patient_id'],'?')} — {c.get('pathologie','')}",
+            "start_date": c["date_consult"],
+            "end_date": c["date_consult"],
+            "all_day": True,
+            "notes": f"Lieu: {c.get('lieu','?')} — {c.get('note','')}",
+            "patient_id": c["patient_id"],
+        })
+    return events
 
 def insert_event(e: dict):
     st.cache_data.clear()
@@ -191,7 +219,7 @@ PAGES = [
 
 def current_page() -> str:
     q = st.query_params.get("p", None)
-    if q: 
+    if q:
         st.session_state["page"] = q
     return st.session_state.get("page", "add")
 
@@ -224,7 +252,7 @@ def page_add():
         with c2:
             d_cons = st.date_input("Date de consultation", value=date.today())
             lieu = st.radio("Lieu", ["Urgences","Consultation","Bloc"], index=1, horizontal=True)
-            d_rdv = st.date_input("Prochain rendez-vous / Suivi (date)", value=None)
+            d_rdv = st.date_input("Prochain rendez-vous / Suivi (date)", value=date.today())
             tags = st.text_input("Tags (séparés par des virgules)")
             photos = st.file_uploader(
                 "Photos (optionnel — multiples autorisées)",
@@ -306,7 +334,7 @@ def page_list():
             with c3:
                 new_tags = st.text_input("Tags", value=r.get("tags",""), key=f"tags_{pid}")
                 new_rdv = st.date_input("Prochain RDV",
-                                        value=pd.to_datetime(r.get("prochain_rdv")).date() if r.get("prochain_rdv") else None,
+                                        value=pd.to_datetime(r.get("prochain_rdv")).date() if r.get("prochain_rdv") else date.today(),
                                         key=f"rdv_{pid}")
             if st.button("💾 Mettre à jour la fiche", key=f"upd_{pid}"):
                 update_patient(pid, {
@@ -325,7 +353,7 @@ def page_list():
                 clieu = st.radio("Lieu", ["Urgences","Consultation","Bloc"], index=1, key=f"clieu_{pid}", horizontal=True)
                 cpatho = st.text_input("Pathologie", key=f"cpa_{pid}")
                 cnote = st.text_area("Observation / notes", key=f"cno_{pid}")
-                crdv = st.date_input("Prochain contrôle (optionnel)", key=f"crdv_{pid}")
+                crdv = st.date_input("Prochain contrôle (optionnel)", value=date.today(), key=f"crdv_{pid}")
                 cphotos = st.file_uploader("Photos (multi)", type=["jpg","jpeg","png"], accept_multiple_files=True, key=f"cph_{pid}")
                 okc = st.form_submit_button("Ajouter à la timeline")
             if okc:
@@ -364,7 +392,7 @@ def page_list():
                                             key=f"cl_{c['id']}", horizontal=True)
                         new_rdv = st.date_input(
                             "Prochain contrôle",
-                            value=pd.to_datetime(c.get("prochain_rdv")).date() if c.get("prochain_rdv") else None,
+                            value=pd.to_datetime(c.get("prochain_rdv")).date() if c.get("prochain_rdv") else date.today(),
                             key=f"cr_{c['id']}",
                         )
 
@@ -424,10 +452,10 @@ def page_agenda():
     with c1: d1 = st.date_input("Du", value=month_start)
     with c2: d2 = st.date_input("Au", value=month_end)
 
-    events = get_events(d1, d2)
-    if events:
-        df = pd.DataFrame(events)
-        for day, grp in df.groupby("start_date"):
+    items = get_events(d1, d2)
+    if items:
+        df = pd.DataFrame(items)
+        for day, grp in df.sort_values("start_date").groupby("start_date"):
             st.markdown(f"### 📅 {day}")
             for _, e in grp.iterrows():
                 txt = f"**{e['title']}**"
@@ -436,17 +464,20 @@ def page_agenda():
                 colx, coly = st.columns([8,1])
                 with colx: st.write(txt)
                 with coly:
-                    if st.button("🗑️", key=f"edelete_{e['id']}"):
-                        delete_event(e["id"]); st.warning("Événement supprimé.")
+                    if str(e["id"]).startswith("CONS-"):
+                        st.caption("consultation")
+                    else:
+                        if st.button("🗑️", key=f"edelete_{e['id']}"):
+                            delete_event(e["id"]); st.warning("Événement supprimé.")
     else:
-        st.info("Aucun événement dans cette période.")
+        st.info("Aucun événement/consultation dans cette période.")
 
     st.markdown("---")
     st.markdown("**➕ Ajouter un événement**")
     with st.form("adde"):
         etitle = st.text_input("Titre (ex. Contrôle glaucome)")
         estart = st.date_input("Date", value=today)
-        eend = st.date_input("Fin (optionnel)", value=None)
+        eend = st.date_input("Fin (optionnel)", value=today)
         eallday = st.checkbox("Toute la journée", value=True)
         enotes = st.text_input("Notes")
         epid = st.text_input("ID patient (optionnel)")
@@ -506,24 +537,24 @@ CREATE TABLE IF NOT EXISTS public.events(
   title text, start_date date, end_date date, all_day boolean,
   notes text, patient_id text, created_at timestamptz default now()
 );
-</details>
+    </details>
         """,
         unsafe_allow_html=True,
     )
-
-# ===================== ROUTER =====================
+===================== ROUTER =====================
 
 PAGE = current_page()
-if PAGE == "add":
-    page_add()
-elif PAGE == "list":
-    page_list()
-elif PAGE == "agenda":
-    page_agenda()
-elif PAGE == "export":
-    page_export()
+if PAGE == “add”:
+page_add()
+elif PAGE == “list”:
+page_list()
+elif PAGE == “agenda”:
+page_agenda()
+elif PAGE == “export”:
+page_export()
 else:
-    page_add()
+page_add()
 
-# Barre de navigation (toujours à la fin, pour rester fixe au premier plan)
+Barre de navigation (toujours à la fin)
+
 render_nav(PAGE)
