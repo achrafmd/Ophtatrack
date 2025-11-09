@@ -11,7 +11,6 @@ st.title("📁 OphtaDossier – Suivi patients (ophtalmologie)")
 SUPABASE_URL = "https://upbbxujsuxduhwaxpnqe.supabase.co"
 SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVwYmJ4dWpzdXhkdWh3YXhwbnFlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjI2MzYyNDgsImV4cCI6MjA3ODIxMjI0OH0.crTLWlZPgV01iDk98EMkXwhmXQASuFfjZ9HMQvcNCrs"
 BUCKET = "Ophtadossier"
-
 sb = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # ───────── HELPERS ─────────
@@ -38,7 +37,7 @@ def sb_signed_url(key: str, days: int = 365):
         return ""
 
 def upload_many(files, base_name: str):
-    """Retourne liste [{key,url}]"""
+    """Upload multi-photos -> [{key,url}]"""
     out = []
     safe = clean_filename(base_name)
     for i, f in enumerate(files or []):
@@ -65,8 +64,7 @@ def delete_photo(key: str):
 
 # ───────── DATA ACCESS ─────────
 def get_patients():
-    r = sb.table("patients").select("*").order("created_at", desc=True).execute()
-    return r.data or []
+    return (sb.table("patients").select("*").order("created_at", desc=True).execute().data) or []
 
 def insert_patient(rec: dict):
     sb.table("patients").insert(rec).execute()
@@ -75,8 +73,7 @@ def update_patient(pid: str, fields: dict):
     sb.table("patients").update(fields).eq("id", pid).execute()
 
 def get_consultations(pid: str):
-    r = sb.table("consultations").select("*").eq("patient_id", pid).order("date_consult", desc=True).execute()
-    return r.data or []
+    return (sb.table("consultations").select("*").eq("patient_id", pid).order("date_consult", desc=True).execute().data) or []
 
 def insert_consult(c: dict):
     sb.table("consultations").insert(c).execute()
@@ -118,9 +115,11 @@ if page == "➕ Ajouter patient":
             niveau = st.selectbox("Priorité", ["Basse", "Moyenne", "Haute"])
         with c2:
             d_cons = st.date_input("Date de consultation", value=date.today())
+            lieu = st.selectbox("Lieu", ["Urgences","Consultation","Bloc"], index=1)
             d_rdv = st.date_input("Prochain rendez-vous / Suivi (date)", value=None)
             tags = st.text_input("Tags (séparés par des virgules)")
-            photos = st.file_uploader("Photos (optionnel — multiples autorisées)", type=["jpg","jpeg","png"], accept_multiple_files=True)
+            photos = st.file_uploader("Photos (optionnel — multiples autorisées)",
+                                      type=["jpg","jpeg","png"], accept_multiple_files=True)
         ok = st.form_submit_button("💾 Enregistrer")
 
     if ok:
@@ -128,22 +127,21 @@ if page == "➕ Ajouter patient":
             st.warning("⚠️ Le nom est obligatoire.")
         else:
             pid = uuid.uuid4().hex[:8]
-            # fiche patient minimale
             insert_patient({
                 "id": pid, "nom": nom.strip(), "telephone": tel.strip(),
                 "pathologie": patho.strip(), "note": note.strip(),
                 "date_consult": str(d_cons), "prochain_rdv": str(d_rdv) if d_rdv else None,
                 "niveau": niveau, "tags": tags.strip(), "photos": []
             })
-            # 1ère consultation dans la timeline
-            photos_items = upload_many(photos, f"{nom}_{d_cons}_{patho}")
+            photos_items = upload_many(photos, f"{nom}_{d_cons}_{patho}_{lieu}")
             insert_consult({
                 "id": uuid.uuid4().hex[:8], "patient_id": pid,
                 "date_consult": str(d_cons), "pathologie": patho.strip(),
                 "note": note.strip(), "prochain_rdv": str(d_rdv) if d_rdv else None,
+                "lieu": lieu,
                 "photos": photos_items
             })
-            st.success(f"✅ Patient {nom} ajouté avec sa consultation du {d_cons}.")
+            st.success(f"✅ Patient {nom} ajouté (consultation {lieu} du {d_cons}).")
 
 # ===== LISTE / RECHERCHE / DOSSIER =====
 elif page == "🔎 Rechercher / Patients":
@@ -188,7 +186,8 @@ elif page == "🔎 Rechercher / Patients":
                     new_tel = st.text_input("Téléphone", value=r.get("telephone",""), key=f"tel_{pid}")
                 with c2:
                     new_patho = st.text_input("Pathologie (principale)", value=r.get("pathologie",""), key=f"patho_{pid}")
-                    new_niv = st.selectbox("Priorité", ["Basse","Moyenne","Haute"], index=["Basse","Moyenne","Haute"].index(r.get("niveau","Basse")), key=f"niv_{pid}")
+                    new_niv = st.selectbox("Priorité", ["Basse","Moyenne","Haute"],
+                                           index=["Basse","Moyenne","Haute"].index(r.get("niveau","Basse")), key=f"niv_{pid}")
                 with c3:
                     new_tags = st.text_input("Tags", value=r.get("tags",""), key=f"tags_{pid}")
                     new_rdv = st.date_input("Prochain RDV", value=pd.to_datetime(r.get("prochain_rdv")).date() if r.get("prochain_rdv") else None, key=f"rdv_{pid}")
@@ -206,17 +205,19 @@ elif page == "🔎 Rechercher / Patients":
                 st.markdown("**➕ Ajouter une consultation (nouvelle entrée dossier)**")
                 with st.form(f"addc_{pid}"):
                     cdate = st.date_input("Date de consultation", value=date.today(), key=f"cd_{pid}")
+                    clieu = st.selectbox("Lieu", ["Urgences","Consultation","Bloc"], index=1, key=f"clieu_{pid}")
                     cpatho = st.text_input("Pathologie", key=f"cpa_{pid}")
                     cnote = st.text_area("Observation / notes", key=f"cno_{pid}")
                     crdv = st.date_input("Prochain contrôle (optionnel)", key=f"crdv_{pid}")
                     cphotos = st.file_uploader("Photos (multi)", type=["jpg","jpeg","png"], accept_multiple_files=True, key=f"cph_{pid}")
                     okc = st.form_submit_button("Ajouter à la timeline")
                 if okc:
-                    media = upload_many(cphotos, f"{new_nom or r['nom']}_{cdate}_{cpatho}")
+                    media = upload_many(cphotos, f"{new_nom or r['nom']}_{cdate}_{cpatho}_{clieu}")
                     insert_consult({
                         "id": uuid.uuid4().hex[:8],
                         "patient_id": pid,
                         "date_consult": str(cdate),
+                        "lieu": clieu,
                         "pathologie": cpatho.strip(),
                         "note": cnote.strip(),
                         "prochain_rdv": str(crdv) if crdv else None,
@@ -226,36 +227,43 @@ elif page == "🔎 Rechercher / Patients":
 
                 st.markdown("---")
 
-                # ---- Timeline ----
+                # ---- Timeline / dossier (photos visibles par date) ----
                 st.markdown("**🗂️ Dossier chronologique**")
                 cons = get_consultations(pid)
                 if not cons:
                     st.info("Aucune consultation enregistrée.")
                 else:
                     for c in cons:
-                        with st.expander(f"📅 {c['date_consult']} — {c.get('pathologie','')}", expanded=False):
+                        with st.expander(f"📅 {c['date_consult']} — {c.get('lieu','Consultation')} — {c.get('pathologie','')}", expanded=False):
                             cc1, cc2 = st.columns([2,1])
                             with cc1:
                                 new_note = st.text_area("Notes", value=c.get("note",""), key=f"cn_{c['id']}")
                                 new_patho = st.text_input("Pathologie", value=c.get("pathologie",""), key=f"cp_{c['id']}")
                             with cc2:
-                                new_rdv = st.date_input("Prochain contrôle", value=pd.to_datetime(c.get("prochain_rdv")).date() if c.get("prochain_rdv") else None, key=f"cr_{c['id']}")
+                                new_lieu = st.selectbox("Lieu", ["Urgences","Consultation","Bloc"],
+                                                        index={"Urgences":0,"Consultation":1,"Bloc":2}.get(c.get("lieu","Consultation"),1),
+                                                        key=f"cl_{c['id']}")
+                                new_rdv = st.date_input("Prochain contrôle",
+                                                        value=pd.to_datetime(c.get("prochain_rdv")).date() if c.get("prochain_rdv") else None,
+                                                        key=f"cr_{c['id']}")
                             if st.button("💾 Mettre à jour cette consultation", key=f"cu_{c['id']}"):
                                 update_consult(c["id"], {
                                     "note": new_note, "pathologie": new_patho,
+                                    "lieu": new_lieu,
                                     "prochain_rdv": str(new_rdv) if new_rdv else None
                                 })
                                 st.success("Consultation mise à jour.")
 
                             # Ajout de photos à cette consultation
-                            add_more = st.file_uploader("➕ Ajouter des photos", type=["jpg","jpeg","png"], accept_multiple_files=True, key=f"addp_{c['id']}")
+                            add_more = st.file_uploader("➕ Ajouter des photos", type=["jpg","jpeg","png"],
+                                                        accept_multiple_files=True, key=f"addp_{c['id']}")
                             if add_more:
-                                extra = upload_many(add_more, f"{r['nom']}_{c['date_consult']}_{c.get('pathologie','')}")
+                                extra = upload_many(add_more, f"{r['nom']}_{c['date_consult']}_{c.get('pathologie','')}_{c.get('lieu','Consultation')}")
                                 updated = (c.get("photos") or []) + extra
                                 update_consult(c["id"], {"photos": updated})
                                 st.success("Photos ajoutées.")
 
-                            # Galerie + suppression
+                            # Galerie + suppression (PHOTOS VISIBLES ICI)
                             pics = c.get("photos") or []
                             if pics:
                                 st.write("**Photos :**")
@@ -269,9 +277,8 @@ elif page == "🔎 Rechercher / Patients":
                                                 update_consult(c["id"], {"photos": new_list})
                                                 st.success("Photo supprimée.")
 
-                            # Suppression de la consultation
+                            # Supprimer la consultation entière
                             if st.button("🗑️ Supprimer cette consultation", key=f"cdc_{c['id']}"):
-                                # supprimer toutes les photos liées
                                 for ph in (c.get("photos") or []):
                                     delete_photo(ph["key"])
                                 delete_consult(c["id"])
@@ -285,16 +292,11 @@ elif page == "📆 Agenda":
     next_month = (month_start + timedelta(days=32)).replace(day=1)
     month_end = next_month - timedelta(days=1)
 
-    # Filtres
     c1, c2 = st.columns(2)
-    with c1:
-        d1 = st.date_input("Du", value=month_start)
-    with c2:
-        d2 = st.date_input("Au", value=month_end)
+    with c1: d1 = st.date_input("Du", value=month_start)
+    with c2: d2 = st.date_input("Au", value=month_end)
 
     events = get_events(d1, d2)
-
-    # Vue liste groupée par jour
     if events:
         df = pd.DataFrame(events)
         for day, grp in df.groupby("start_date"):
@@ -335,7 +337,7 @@ elif page == "📆 Agenda":
         st.success("Événement ajouté.")
 
 # ===== EXPORT =====
-else:  # 📤 Export
+else:
     st.subheader("📤 Export")
     pts = get_patients()
     cons = sb.table("consultations").select("*").execute().data or []
