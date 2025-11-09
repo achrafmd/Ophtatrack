@@ -303,13 +303,16 @@ else:
                                 new_list = [x for x in pics if x["key"] != ph["key"]]
                                 update_consult(c["id"], {"photos": new_list})
                                 st.success("Photo supprimée.")
+                                
                             # Supprimer la consultation entière
                             if st.button("🗑️ Supprimer cette consultation", key=f"cdc_{c['id']}"):
                                 for ph in (c.get("photos") or []):
                                     delete_photo(ph["key"])
                                 delete_consult(c["id"])
                                 st.warning("Consultation supprimée.")
-
+ ← fin du for c in cons
+            # ← fin du else (quand il y a des consultations)
+        # ← fin du with st.expander du patient
 # ===== AGENDA =====
 elif page == "📆 Agenda":
     st.subheader("📆 Agenda global (RDV & activités)")
