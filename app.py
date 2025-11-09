@@ -528,23 +528,23 @@ CREATE TABLE IF NOT EXISTS public.events(
 );
     </details>
 """, unsafe_allow_html=True)
-#============ ROUTER (avec slide + back) ============
-
+    
+# ============ ROUTER (avec slide + back) ============
 PAGE = current_page()
 
 page_wrapper_start()     # ouvre le conteneur animé
 render_back(PAGE)        # bouton Retour si != "add"
 
 if PAGE == "add":
-page_add()
+    page_add()
 elif PAGE == "list":
-page_list()
+    page_list()
 elif PAGE == "agenda":
-page_agenda()
+    page_agenda()
 elif PAGE == "export":
-page_export()
+    page_export()
 else:
-page_add()
+    page_add()
 
 page_wrapper_end()       # ferme + joue l’animation
 render_nav(PAGE)         # barre d’onglets en bas
