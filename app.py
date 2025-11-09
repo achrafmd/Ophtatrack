@@ -1,24 +1,15 @@
-# app.py — OphtaDossier (mobile iOS-like, slide + back, bleu médical)
+# app.py (entête + UI)
 from __future__ import annotations
 import streamlit as st
 import pandas as pd
 from datetime import date, datetime, timedelta
 import unicodedata, re, uuid
-
 from supabase import create_client
 
-# ========= CONFIG =========
-APP_TITLE = "OphtaDossier"
-SUPABASE_URL = "https://upbbxujsuxduhwaxpnqe.supabase.co"
-SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVwYmJ4dWpzdXhkdWh3YXhwbnFlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjI2MzYyNDgsImV4cCI6MjA3ODIxMjI0OH0.crTLWlZPgV01iDk98EMkXwhmXQASuFfjZ9HMQvcNCrs"
-BUCKET = "Ophtadossier"  # respecter la casse exacte côté Supabase Storage
-
-sb = create_client(SUPABASE_URL, SUPABASE_KEY)
-
 def configure_page():
-    st.set_page_config(page_title=APP_TITLE, layout="wide")
-   st.markdown(
-    """
+    st.set_page_config(page_title="OphtaDossier", layout="wide")
+    st.markdown(
+        """
 <style>
 :root{
   --blue:#2E80F0; --blue-600:#1E62C9;
@@ -68,9 +59,9 @@ section.main>div{padding-top:.5rem!important;padding-bottom:6rem!important;}
 body[data-dir="forward"] .appwrap{animation-name:slideInLeft}
 body[data-dir="back"] .appwrap{animation-name:slideInRight}
 </style>
-""",
-    unsafe_allow_html=True,
-)
+        """,
+        unsafe_allow_html=True,
+    )
 
 configure_page()
 
