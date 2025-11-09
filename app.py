@@ -11,11 +11,6 @@ def _configure_page():
     st.markdown(
         """
 <style>
-@keyframes slideInLeft { from { opacity:.25; transform:translateX(28px) } to { opacity:1; transform:none } }
-@keyframes slideInRight{ from { opacity:.25; transform:translateX(-28px)} to { opacity:1; transform:none } }
-.appwrap{ animation-duration:.28s; animation-fill-mode:both }
-</style>
-<style>
 :root{
   --blue:#2E80F0; --blue-600:#1E62C9;
   --bg:#F6FAFF; --card:#FFFFFF; --glass:rgba(255,255,255,.90);
@@ -51,14 +46,17 @@ section.main>div{padding-top:.5rem!important;padding-bottom:6.8rem!important}
   background:#fff;border:1px solid var(--line);border-radius:10px;
   text-decoration:none;color:#0f172a;font-weight:700}
 
-/* bottom nav iOS (on garde st.button seulement) */
-.navbar{position:fixed;left:0;right:0;bottom:0;z-index:1000;backdrop-filter:blur(10px);
-  background:var(--glass);border-top:1px solid var(--line);padding:8px 6px}
-#ophta-nav .stButton>button{background:#fff;color:#334155;border:1px solid var(--line)}
-#ophta-nav .stButton>button.active{background:var(--blue);color:#fff;border-color:var(--blue);
-  box-shadow:0 6px 16px rgba(46,128,240,.25)}
-#ophta-nav .stButton>button .lbl{display:block;font-weight:700}
-#ophta-nav .stButton>button .ico{display:block;font-size:20px}
+/* --- NAV FIXE --- */
+.navbar{position:fixed;left:0;right:0;z-index:1000;backdrop-filter:blur(10px);
+  background:var(--glass);border-top:1px solid var(--line);padding:8px 10px}
+.navbar.bottom{bottom:0}
+.navbar.top{top:0;border-top:none;border-bottom:1px solid var(--line)}
+.navwrap{display:flex;gap:8px}
+.navbtn{flex:1;border:none;border-radius:12px;padding:8px 6px;font-weight:700;
+  background:#fff;color:#334155;text-decoration:none;display:block;text-align:center}
+.navbtn.active{background:var(--blue);color:#fff;box-shadow:0 6px 16px rgba(46,128,240,.25)}
+.navbtn .ico{font-size:20px;display:block}
+.nav-hidden{position:fixed;left:-9999px;top:-9999px;opacity:0;height:0;width:0;overflow:hidden}
 
 /* slide (avant/arrière) */
 @keyframes slideInLeft{from{opacity:.25;transform:translateX(18px)}to{opacity:1;transform:none}}
@@ -125,15 +123,7 @@ def _slug(text: str) -> str:
     text = unicodedata.normalize("NFKD", text or "").encode("ascii","ignore").decode("ascii")
     return re.sub(r"[^A-Za-z0-9._-]+", "_", text).strip("_")
 
-def _signed_url(key: str, days=365) -> str:
-    try:
-        r = sb.storage.from_(BUCKET).create_signed_url(key, 60*60*24*days)
-        return r.get("signedURL") or r.get("signed_url") or ""
-    except Exception:
-        return ""
-
 def clean_filename(text: str) -> str:
-    import unicodedata, re
     text = unicodedata.normalize("NFKD", text or "").encode("ascii","ignore").decode("ascii")
     return re.sub(r"[^A-Za-z0-9._-]+", "_", text).strip("_")
 
@@ -163,6 +153,7 @@ def upload_many(files, base_name: str, owner_uid: str):
         except Exception as e:
             st.error(f"Erreur upload {getattr(f,'name','(fichier)')} : {e}")
     return out
+
 def delete_photo(key: str) -> bool:
     try:
         sb.storage.from_(BUCKET).remove([key]); return True
@@ -249,30 +240,42 @@ def page_wrapper_start():
 def page_wrapper_end():
     st.markdown('</div>', unsafe_allow_html=True)
 
-def render_nav(active: str):
-    st.markdown('<div class="navbar"><div id="ophta-nav">', unsafe_allow_html=True)
-    cols = st.columns(4)
-    for i,(code, ico, label) in enumerate(PAGES):
-        with cols[i]:
-            is_active = "active" if code==active else ""
-            btn = st.button(f"{ico}  {label}", key=f"nav_{code}")
-            # ajouter la classe "active" visuelle
-            st.markdown(
-                f"""
-                <script>
-                const el = window.parent.document.querySelector('button[kind="secondary"]#nav_{code}');
-                if (el) {{
-                  el.id = "nav_{code}";
-                  el.classList.add("{is_active}");
-                  el.innerHTML = '<span class="ico">{ico}</span><span class="lbl">{label}</span>';
-                }}
-                </script>
-                """,
-                unsafe_allow_html=True,
-            )
-            if btn:
-                nav_go(code)
-    st.markdown('</div></div>', unsafe_allow_html=True)
+def render_nav(active: str, pos: str = "bottom"):
+    # Barre HTML fixe
+    st.markdown(
+        f"""
+<div class="navbar {'top' if pos=='top' else 'bottom'}">
+  <div class="navwrap">
+    <a class="navbtn {'active' if active=='add' else ''}"    data-to="add"><span class="ico">➕</span>Ajouter</a>
+    <a class="navbtn {'active' if active=='list' else ''}"   data-to="list"><span class="ico">🔎</span>Patients</a>
+    <a class="navbtn {'active' if active=='agenda' else ''}" data-to="agenda"><span class="ico">📆</span>Agenda</a>
+    <a class="navbtn {'active' if active=='export' else ''}" data-to="export"><span class="ico">📤</span>Export</a>
+  </div>
+</div>
+<script>
+(function(){
+  const clickProxy = (id)=>{ const wrap = document.getElementById(id); if(wrap){ const b = wrap.querySelector('button'); if(b){ b.click(); } } };
+  document.querySelectorAll('.navbar .navbtn').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const to = btn.getAttribute('data-to');
+      if(to==='add')    clickProxy('w_nav_add');
+      if(to==='list')   clickProxy('w_nav_list');
+      if(to==='agenda') clickProxy('w_nav_agenda');
+      if(to==='export') clickProxy('w_nav_export');
+    });
+  });
+})();
+</script>
+        """,
+        unsafe_allow_html=True,
+    )
+    # Boutons Streamlit invisibles pour déclencher nav_go côté Python
+    st.markdown('<div class="nav-hidden">', unsafe_allow_html=True)
+    st.markdown('<div id="w_nav_add">', unsafe_allow_html=True);    st.button(" ", key="__nav_go_add",    on_click=lambda: nav_go("add"));    st.markdown("</div>", unsafe_allow_html=True)
+    st.markdown('<div id="w_nav_list">', unsafe_allow_html=True);   st.button(" ", key="__nav_go_list",   on_click=lambda: nav_go("list"));   st.markdown("</div>", unsafe_allow_html=True)
+    st.markdown('<div id="w_nav_agenda">', unsafe_allow_html=True); st.button(" ", key="__nav_go_agenda", on_click=lambda: nav_go("agenda")); st.markdown("</div>", unsafe_allow_html=True)
+    st.markdown('<div id="w_nav_export">', unsafe_allow_html=True); st.button(" ", key="__nav_go_export", on_click=lambda: nav_go("export")); st.markdown("</div>", unsafe_allow_html=True)
+    st.markdown('</div>', unsafe_allow_html=True)
 
 # ────────────────────────── PAGES
 def page_add(owner: str):
@@ -304,7 +307,7 @@ def page_add(owner: str):
             "date_consult": str(d_cons), "prochain_rdv": str(d_rdv) if d_rdv else None,
             "niveau": niveau, "tags": tags.strip(),
         })
-        media = upload_many(photos, f"{nom}_{d_cons}_{patho}_{lieu}")
+        media = upload_many(photos, f"{nom}_{d_cons}_{patho}_{lieu}", owner)
         insert_consult(owner, {
             "id": uuid.uuid4().hex[:8], "patient_id": pid,
             "date_consult": str(d_cons), "lieu": lieu,
@@ -386,7 +389,7 @@ def page_list(owner: str):
                                           accept_multiple_files=True, key=f"cph_{pid}")
                 okc = st.form_submit_button("Ajouter à la timeline")
             if okc:
-                media = upload_many(cphotos, f"{new_nom or r['nom']}_{cdate}_{cpatho}_{clieu}")
+                media = upload_many(cphotos, f"{new_nom or r['nom']}_{cdate}_{cpatho}_{clieu}", owner)
                 insert_consult(owner, {
                     "id": uuid.uuid4().hex[:8], "patient_id": pid, "date_consult": str(cdate),
                     "lieu": clieu, "pathologie": cpatho.strip(), "note": cnote.strip(),
@@ -434,7 +437,7 @@ def page_list(owner: str):
                     add_more = st.file_uploader("➕ Ajouter des photos", type=["jpg","jpeg","png"],
                                                 accept_multiple_files=True, key=f"addp_{c['id']}")
                     if add_more:
-                        extra   = upload_many(add_more, f"{r['nom']}_{c['date_consult']}_{c.get('pathologie','')}_{c.get('lieu','Consultation')}")
+                        extra   = upload_many(add_more, f"{r['nom']}_{c['date_consult']}_{c.get('pathologie','')}_{c.get('lieu','Consultation')}", owner)
                         updated = (c.get("photos") or []) + extra
                         update_consult(owner, c["id"], {"photos": updated})
                         st.success("Photos ajoutées.")
