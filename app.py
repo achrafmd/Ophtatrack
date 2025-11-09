@@ -507,27 +507,26 @@ if not u:
     auth_login_ui()
     st.stop()
 
+# Synchroniser l’URL -> l’état (aucun nouvel onglet)
 sync_page_from_query()
-if "page" not in st.session_state:
-st.session_state["page"] = "add"
-st.experimental_set_query_params(p="add")
+st.session_state.setdefault("page", "add")
+st.session_state.setdefault("nav_dir", "")
+st.experimental_set_query_params(p=st.session_state["page"])
 
-top bar (email + logout)
-
-c1,c2 = st.columns([3,1])
-with c1: st.caption(f"Connecté : {u['email']}")
+# Barre du haut
+c1, c2 = st.columns([3, 1])
+with c1:
+    st.caption(f"Connecté : {u['email']}")
 with c2:
-if st.button("Se déconnecter"):
-auth_logout()
+    if st.button("Se déconnecter"):
+        auth_logout()
 
-page + animation
-
-PAGE = st.session_state.get("page","add")
-st.session_state.setdefault("nav_dir","")
+# Page courante + animation
+PAGE = st.session_state["page"]
 st.markdown(f'<div class="appwrap {st.session_state["nav_dir"]}">', unsafe_allow_html=True)
 render_back(PAGE)
 
-# routing des pages
+# Routing
 if PAGE == "add":
     page_add(u["id"])
 elif PAGE == "list":
@@ -539,6 +538,5 @@ elif PAGE == "export":
 else:
     page_add(u["id"])
 
-# fin du wrapper + barre de navigation iOS
-st.markdown('', unsafe_allow_html=True)
+st.markdown('</div>', unsafe_allow_html=True)
 render_nav(PAGE)
