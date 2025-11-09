@@ -506,3 +506,24 @@ CREATE TABLE IF NOT EXISTS public.events(
   title text, start_date date, end_date date, all_day boolean,
   notes text, patient_id text, created_at timestamptz default now()
 );
+</details>
+        """,
+        unsafe_allow_html=True,
+    )
+
+# ===================== ROUTER =====================
+
+PAGE = current_page()
+if PAGE == "add":
+    page_add()
+elif PAGE == "list":
+    page_list()
+elif PAGE == "agenda":
+    page_agenda()
+elif PAGE == "export":
+    page_export()
+else:
+    page_add()
+
+# Barre de navigation (toujours à la fin, pour rester fixe au premier plan)
+render_nav(PAGE)
