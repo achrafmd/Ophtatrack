@@ -1,118 +1,127 @@
-# app.py — OphtaDossier (iPhone-like UI + slides + back)
+# app.py — OphtaDossier (mobile iOS-like, slide + back, bleu médical)
 from __future__ import annotations
 import streamlit as st
 import pandas as pd
 from datetime import date, datetime, timedelta
 import unicodedata, re, uuid
+
 from supabase import create_client
 
-# ============ CONFIG ============
-
-def configure_page():
-    st.set_page_config(page_title="OphtaDossier", layout="wide")
-    st.markdown("""
-<style>
-:root{
-  --primary:#4c8bf5; --primary-600:#2563eb;
-  --bg:#f0f6ff; --card:#ffffff; --border:#e6edf7; --text:#0f172a;
-}
-header, footer, [data-testid="stStatusWidget"], [data-testid="stToolbar"] { display:none !important; }
-section.main > div { padding-top:.5rem !important; padding-bottom:6.5rem !important; }
-html, body { background:var(--bg); color:var(--text); overflow-x:hidden; }
-*, input, textarea { font-size:16px !important; }
-
-/* boutons */
-.stButton > button{
-  background:var(--primary); color:#fff; border:none; border-radius:12px;
-  padding:12px 16px; font-weight:600;
-  box-shadow:0 4px 12px rgba(76,139,245,.20); transition:transform .08s ease-in;
-}
-.stButton > button:hover { background:var(--primary-600); }
-.stButton > button:active { transform:scale(.98); }
-
-/* inputs */
-.stTextInput input, .stTextArea textarea, .stDateInput input,
-.stSelectbox [role="combobox"], .stMultiSelect [role="combobox"]{
-  background:#fff !important; border:1px solid var(--border) !important;
-  border-radius:10px !important; padding:12px 12px !important;
-}
-
-/* chips radio */
-.stRadio [role="radiogroup"] { gap:10px; flex-wrap:wrap; }
-.stRadio [data-baseweb="radio"]{ padding:6px 10px; background:#fff;
-  border:1px solid var(--border); border-radius:12px; }
-.stRadio [aria-checked="true"]{ border-color:var(--primary); box-shadow:0 0 0 2px rgba(76,139,245,.15); }
-
-/* cards */
-.card{ background:var(--card); border:1px solid var(--border);
-  border-radius:14px; padding:14px; margin:10px 0; box-shadow:0 2px 6px rgba(0,0,0,.04); }
-
-/* wrapper animé */
-#ophta-root{ will-change:transform; }
-
-/* back button (fixe, semi-trans) */
-.ophta-back{
-  position:fixed; left:12px; top:calc(env(safe-area-inset-top) + 10px);
-  z-index:1100; background:rgba(255,255,255,.75);
-  backdrop-filter:blur(12px);
-  border:1px solid var(--border); color:#0f172a; text-decoration:none !important;
-  padding:8px 12px; border-radius:12px; font-weight:700;
-  box-shadow:0 6px 16px rgba(15,23,42,.08);
-}
-
-/* bottom nav iOS (semi-trans + blur) */
-.navbar{
-  position:fixed; left:0; right:0; bottom:0; z-index:1000;
-  background:rgba(255,255,255,.82); backdrop-filter:blur(14px);
-  border-top:1px solid var(--border);
-  display:flex; justify-content:space-around; padding:8px 6px;
-  padding-bottom:calc(8px + env(safe-area-inset-bottom));
-}
-.navbtn{
-  flex:1; text-align:center; text-decoration:none !important;
-  color:#334155 !important; font-weight:700; border-radius:12px; padding:8px 6px;
-}
-.navbtn .ico{ font-size:20px; display:block; }
-.navbtn[aria-current="page"]{
-  color:#fff !important; background:var(--primary);
-  box-shadow:0 6px 16px rgba(76,139,245,.25);
-}
-</style>
-    """, unsafe_allow_html=True)
-
-configure_page()
-
-# ============ SUPABASE ============
-SUPABASE_URL  = "https://upbbxujsuxduhwaxpnqe.supabase.co"
-SUPABASE_KEY  = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVwYmJ4dWpzdXhkdWh3YXhwbnFlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjI2MzYyNDgsImV4cCI6MjA3ODIxMjI0OH0.crTLWlZPgV01iDk98EMkXwhmXQASuFfjZ9HMQvcNCrs"
-BUCKET        = "Ophtadossier"   # respecter la casse exacte
+# ========= CONFIG =========
+APP_TITLE = "OphtaDossier"
+SUPABASE_URL = "https://upbbxujsuxduhwaxpnqe.supabase.co"
+SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVwYmJ4dWpzdXhkdWh3YXhwbnFlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjI2MzYyNDgsImV4cCI6MjA3ODIxMjI0OH0.crTLWlZPgV01iDk98EMkXwhmXQASuFfjZ9HMQvcNCrs"
+BUCKET = "Ophtadossier"  # respecter la casse exacte côté Supabase Storage
 
 sb = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# ============ HELPERS ============
-def clean_filename(text: str) -> str:
-    text = unicodedata.normalize("NFKD", text or "").encode("ascii", "ignore").decode("ascii")
-    return re.sub(r"[^A-Za-z0-9._-]+", "_", text).strip("_")
+def configure_page():
+    st.set_page_config(page_title=APP_TITLE, layout="wide")
+    st.markdown(
+        """
+<style>
+:root{
+  --blue:#2E80F0;           /* bleu médical */
+  --blue-600:#1E62C9;
+  --bg:#F6FAFF;
+  --card:#FFFFFF;
+  --glass:rgba(255,255,255,.82);
+  --line:#E6EDF8;
+  --text:#0F172A;
+}
+html,body{background:var(--bg);color:var(--text);overflow-x:hidden;}
+header, footer, [data-testid="stStatusWidget"], [data-testid="stToolbar"]{display:none!important;}
+section.main>div{padding-top:.5rem!important;padding-bottom:6rem!important;}
+*,input,textarea{font-size:16px!important;}
 
-def sb_signed_url(key: str, days: int = 365) -> str:
+.stButton>button{
+  background:var(--blue);color:#fff;border:none;border-radius:12px;
+  padding:12px 16px;font-weight:700;
+  box-shadow:0 6px 18px rgba(46,128,240,.20);transition:transform .08s ease-in;
+}
+.stButton>button:hover{background:var(--blue-600)}
+.stButton>button:active{transform:scale(.98)}
+
+/* Inputs / selects */
+.stTextInput input,.stTextArea textarea,.stDateInput input,
+.stSelectbox [role="combobox"], .stMultiSelect [role="combobox"]{
+  background:#fff!important;border:1px solid var(--line)!important;
+  border-radius:12px!important;padding:12px 12px!important;
+}
+
+/* Cards */
+.card{
+  background:var(--card);border:1px solid var(--line);
+  border-radius:14px;padding:14px;margin:10px 0;
+  box-shadow:0 2px 6px rgba(0,0,0,.04);
+}
+
+/* Galerie */
+.photo-grid img{border-radius:8px}
+
+/* Topbar + bouton retour */
+.topbar{position:sticky;top:0;z-index:999;background:var(--bg);padding:6px 4px 2px}
+.backbtn{
+  display:inline-flex;align-items:center;gap:6px;padding:8px 10px;
+  background:#fff;border:1px solid var(--line);border-radius:10px;
+  text-decoration:none;color:#0f172a;font-weight:700;
+}
+
+/* Bottom nav (verre) */
+.navbar{
+  position:fixed;left:0;right:0;bottom:0;z-index:1000;
+  backdrop-filter:blur(10px);background:var(--glass);
+  border-top:1px solid var(--line);
+  display:flex;justify-content:space-around;padding:8px 6px;
+}
+.navbtn{
+  flex:1;text-align:center;text-decoration:none!important;color:#334155!important;
+  font-weight:700;border-radius:12px;padding:8px 6px;
+}
+.navbtn[aria-current="page"]{color:#fff!important;background:var(--blue);
+  box-shadow:0 6px 16px rgba(46,128,240,.25);}
+.navbtn .ico{font-size:20px;display:block}
+
+/* Slide animations */
+@keyframes slideInLeft{from{opacity:.3;transform:translateX(18px)}to{opacity:1;transform:none}}
+@keyframes slideInRight{from{opacity:.3;transform:translateX(-18px)}to{opacity:1;transform:none}}
+.appwrap{animation-duration:.22s;animation-fill-mode:both}
+body[data-slide="forward"] .appwrap{animation-name:slideInLeft}
+body[data-slide="back"] .appwrap{animation-name:slideInRight}
+</style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+configure_page()
+
+# ========= UTILS =========
+def clean_filename(text: str) -> str:
+    text = unicodedata.normalize("NFKD", text or "").encode("ascii","ignore").decode("ascii")
+    return re.sub(r"[^A-Za-z0-9._-]+","_",text).strip("_")
+
+def sb_signed_url(key: str, days:int=365) -> str:
     try:
-        res = sb.storage.from_(BUCKET).create_signed_url(key, 60*60*24*days)
-        return res.get("signedURL") or res.get("signed_url") or ""
+        r = sb.storage.from_(BUCKET).create_signed_url(key, 60*60*24*days)
+        return r.get("signedURL") or r.get("signed_url") or ""
     except Exception:
         return ""
 
 def upload_many(files, base_name: str):
+    """Upload multiples fichiers -> [{key,url}]"""
     out = []
-    if not files:
-        return out
-    safe = clean_filename(base_name)
+    if not files: return out
+    stem = clean_filename(base_name)
     for i, f in enumerate(files):
         try:
             raw = f.read()
             ext = (f.name.split(".")[-1] or "jpg").lower()
-            key = f"{safe}_{i+1}.{ext}"
-            # garder clé unique => pas d'upsert nécessaire
-            sb.storage.from_(BUCKET).upload(path=key, file=raw, file_options={"contentType": f.type or "image/jpeg"})
+            key = f"{stem}_{i+1}.{ext}"
+            sb.storage.from_(BUCKET).upload(
+                path=key,
+                file=raw,
+                file_options={"contentType": f.type or "image/jpeg", "upsert": "true"},
+            )
             out.append({"key": key, "url": sb_signed_url(key)})
         except Exception as e:
             st.error(f"Erreur upload {getattr(f,'name','(fichier)')} : {e}")
@@ -126,7 +135,7 @@ def delete_photo(key: str) -> bool:
         st.error(f"Suppression échouée ({key}) : {e}")
         return False
 
-# ============ DATA ============
+# ========= DATA ACCESS (cache court) =========
 @st.cache_data(ttl=30)
 def get_patients():
     return (sb.table("patients").select("*").order("created_at", desc=True).execute().data) or []
@@ -157,7 +166,7 @@ def delete_consult(cid: str):
     sb.table("consultations").delete().eq("id", cid).execute()
 
 @st.cache_data(ttl=30)
-def get_events(start_d: date | None = None, end_d: date | None = None):
+def get_events(start_d: date | None=None, end_d: date | None=None):
     q = sb.table("events").select("*")
     if start_d: q = q.gte("start_date", str(start_d))
     if end_d:   q = q.lte("start_date", str(end_d))
@@ -171,96 +180,129 @@ def delete_event(eid: str):
     st.cache_data.clear()
     sb.table("events").delete().eq("id", eid).execute()
 
-# ============ NAVIGATION & SLIDES ============
-PAGES = [
-    ("add",    "➕", "Ajouter"),
-    ("list",   "🔎", "Patients"),
-    ("agenda", "📆", "Agenda"),
-    ("export", "📤", "Export"),
-]
+# ========= NAVIGATION (SPA, pas de nouvel onglet) =========
+TABS = [("add","➕","Ajouter"),("list","🔎","Patients"),("agenda","📆","Agenda"),("export","📤","Export")]
+ORDER = {c:i for i,(c,_,_) in enumerate(TABS)}
 
-def _qp_get(name: str, default=None):
-    v = st.query_params.get(name, default)
-    if isinstance(v, list):
-        return v[0] if v else default
-    return v
+def nav_set(page: str, slide: str="forward"):
+    st.session_state.setdefault("history", [])
+    cur = st.session_state.get("page","add")
+    if page != cur:
+        st.session_state["history"].append(cur)
+    st.session_state["page"] = page
+    st.session_state["slide"] = slide
+
+def nav_back():
+    hist = st.session_state.get("history", [])
+    if hist:
+        prev = hist.pop()
+        nav_set(prev, "back")
+    else:
+        nav_set("add", "back")
 
 def current_page() -> str:
-    # params ?p=...&dir=fwd|back
-    p   = _qp_get("p", st.session_state.get("page", "add")) or "add"
-    d   = _qp_get("dir", "fwd")
-    prv = st.session_state.get("page", "add")
-    if p != prv:
-        st.session_state["last_page"] = prv
-    st.session_state["page"] = p
-    st.session_state["anim"] = "forward" if d == "fwd" else "back"
-    return p
+    return st.session_state.get("page","add")
 
-def goto(page_key: str, dir_flag: str = "fwd"):
-    st.session_state["page"] = page_key
-    st.session_state["anim"] = "forward" if dir_flag == "fwd" else "back"
-    st.query_params.update({"p": page_key, "dir": dir_flag})
+def page_wrapper_start():
+    slide = st.session_state.get("slide","forward")
+    st.markdown(
+        f"""<div class="appwrap">
+<script>
+document.body.setAttribute('data-slide','{slide}');
+setTimeout(()=>document.body.setAttribute('data-slide',''),260);
+</script>
+""",
+        unsafe_allow_html=True,
+    )
 
-def render_back(active_key: str):
-    if active_key != "add":
-        prev = st.session_state.get("last_page", "add")
+def page_wrapper_end():
+    st.markdown("</div>", unsafe_allow_html=True)
+
+def render_back(page: str):
+    if page != "add":
+        st.markdown('<div class="topbar"><a href="#" class="backbtn" id="btn-back">⬅︎ Retour</a></div>', unsafe_allow_html=True)
+        # bouton invisible pour déclencher Python
+        st.button(" ", key="__go_back__", on_click=lambda: nav_back())
         st.markdown(
-            f'<a class="ophta-back" href="?p={prev}&dir=back">◀ Retour</a>',
+            """
+<script>
+document.getElementById("btn-back")?.addEventListener("click", (e)=>{
+  e.preventDefault(); window.parent.postMessage({type:"nav", to:"back"}, "*");
+});
+</script>
+            """,
             unsafe_allow_html=True,
         )
 
-def render_nav(active_key: str):
+def render_nav(active: str):
     html = ['<nav class="navbar">']
-    for key, ico, label in PAGES:
-        current = 'aria-current="page"' if key == active_key else ""
-        html.append(f'<a class="navbtn" {current} href="?p={key}&dir=fwd"><span class="ico">{ico}</span>{label}</a>')
+    for code, ico, label in TABS:
+        cur = 'aria-current="page"' if code==active else ""
+        html.append(f'<a href="#" class="navbtn" data-to="{code}" {cur}><span class="ico">{ico}</span>{label}</a>')
     html.append("</nav>")
-    st.markdown("\n".join(html), unsafe_allow_html=True)
+    st.markdown("".join(html), unsafe_allow_html=True)
 
-def page_wrapper_start():
-    st.markdown('<div id="ophta-root">', unsafe_allow_html=True)
+    # 4 boutons invisibles reliés au JS (pas de nouvel onglet)
+    c1,c2,c3,c4 = st.columns(4)
+    with c1: st.button(" ", key="__go_add__", on_click=lambda: nav_set("add","forward"))
+    with c2: st.button(" ", key="__go_list__", on_click=lambda: nav_set("list","forward"))
+    with c3: st.button(" ", key="__go_agenda__", on_click=lambda: nav_set("agenda","forward"))
+    with c4: st.button(" ", key="__go_export__", on_click=lambda: nav_set("export","forward"))
 
-def page_wrapper_end():
-    st.markdown('</div>', unsafe_allow_html=True)
-    # joue l'animation selon la direction demandée
-    direction = st.session_state.get("anim", "forward")
-    start = "100vw" if direction == "forward" else "-100vw"
-    st.markdown(f"""
+    st.markdown(
+        """
 <script>
-const wrap = document.querySelector('#ophta-root');
-if(wrap){{
-  wrap.style.transform = 'translateX({start})';
-  wrap.style.transition = 'transform 260ms ease';
-  setTimeout(()=>{{ wrap.style.transform = 'translateX(0)'; }}, 10);
-  setTimeout(()=>{{ wrap.style.transition = ''; }}, 320);
-}}
+(function(){
+  const map={add:"__go_add__",list:"__go_list__",agenda:"__go_agenda__",export:"__go_export__",back:"__go_back__"};
+  function clickKey(k){
+    const btn=[...window.parent.document.querySelectorAll("button,div[role=button]")].find(b=>b.getAttribute("data-baseweb")==="button" && (b.innerText.trim()===" "||b.id===k));
+    const fallback = window.parent.document.querySelector('button[kind][disabled="false"]');
+    (btn||fallback)?.click();
+  }
+  // nav bar
+  document.querySelectorAll(".navbtn").forEach(a=>{
+    a.addEventListener("click",(e)=>{e.preventDefault();
+      window.parent.postMessage({type:"nav", to:a.dataset.to},"*");
+    })
+  });
+  // back + autres depuis postMessage
+  window.addEventListener("message",(e)=>{
+    if(!e?.data||e.data.type!=="nav")return;
+    const k = map[e.data.to]; if(!k)return;
+    // set direction
+    const dir = (e.data.to==="back") ? "back" : "forward";
+    document.body.setAttribute("data-slide", dir);
+    clickKey(k);
+  });
+})();
 </script>
-    """, unsafe_allow_html=True)
+        """,
+        unsafe_allow_html=True,
+    )
 
-# ============ PAGES ============
+# ========= PAGES =========
 def page_add():
     st.subheader("➕ Ajouter un patient")
     with st.form("addp"):
         c1, c2 = st.columns(2)
         with c1:
-            nom = st.text_input("Nom du patient")
-            tel = st.text_input("Téléphone (ex. +2126...)")
-            patho = st.text_input("Pathologie / Diagnostic")
+            nom  = st.text_input("Nom du patient")
+            tel  = st.text_input("Téléphone (ex. +2126...)")
+            patho= st.text_input("Pathologie / Diagnostic")
             note = st.text_area("Notes / Observation", height=120)
             niveau = st.radio("Priorité", ["Basse","Moyenne","Haute"], index=0, horizontal=True)
         with c2:
             d_cons = st.date_input("Date de consultation", value=date.today())
-            lieu = st.radio("Lieu", ["Urgences","Consultation","Bloc"], index=1, horizontal=True)
-            d_rdv = st.date_input("Prochain rendez-vous / Suivi (date)", value=None)
-            tags = st.text_input("Tags (séparés par des virgules)")
+            lieu   = st.radio("Lieu", ["Urgences","Consultation","Bloc"], index=1, horizontal=True)
+            d_rdv  = st.date_input("Prochain rendez-vous / Suivi (date)", value=None)
+            tags   = st.text_input("Tags (séparés par des virgules)")
             photos = st.file_uploader("Photos (optionnel — multiples autorisées)",
                                       type=["jpg","jpeg","png"], accept_multiple_files=True)
         ok = st.form_submit_button("💾 Enregistrer")
 
     if ok:
         if not nom:
-            st.warning("⚠️ Le nom est obligatoire.")
-            return
+            st.warning("⚠️ Le nom est obligatoire."); return
         pid = uuid.uuid4().hex[:8]
         insert_patient({
             "id": pid, "nom": nom.strip(), "telephone": tel.strip(),
@@ -278,14 +320,13 @@ def page_add():
             "photos": media,
         })
         st.success(f"✅ Patient {nom} ajouté (consultation {lieu} du {d_cons}).")
-        goto("list", "fwd")
+        nav_set("list","forward")
 
 def page_list():
-    st.subheader("🔎 Rechercher / Filtrer / Modifier")
+    st.subheader("🔎 Rechercher / Modifier")
     pts = get_patients()
     if not pts:
-        st.info("Aucun patient pour l’instant.")
-        return
+        st.info("Aucun patient."); return
 
     df = pd.DataFrame(pts)
     colA, colB, colC = st.columns([1,1,1])
@@ -303,37 +344,34 @@ def page_list():
         kw = st.text_input("Mot-clé (notes)")
 
     view = df.copy()
-    if sel_pathos:
-        view = view[view["pathologie"].isin(sel_pathos)]
-    if isinstance(drange, tuple) and len(drange) == 2:
+    if sel_pathos: view = view[view["pathologie"].isin(sel_pathos)]
+    if isinstance(drange, tuple) and len(drange)==2:
         s = pd.to_datetime(view["date_consult"]).dt.date
-        view = view[(s >= drange[0]) & (s <= drange[1])]
-    if kw:
-        view = view[view["note"].fillna("").str.contains(kw, case=False, na=False)]
+        view = view[(s>=drange[0]) & (s<=drange[1])]
+    if kw: view = view[view["note"].fillna("").str.contains(kw, case=False, na=False)]
 
     st.caption(f"{len(view)} patient(s) trouvé(s).")
-
     for _, r in view.sort_values("date_consult", ascending=False).iterrows():
         with st.expander(f"👁️ {r.get('nom','')} — {r.get('pathologie','')}  |  {r.get('date_consult','')}  |  {r.get('niveau','')}"):
             pid = r["id"]
 
-            # fiche
+            # Fiche patient
             st.markdown('<div class="card">', unsafe_allow_html=True)
             st.markdown("**🧑‍⚕️ Infos patient**")
-            c1, c2, c3 = st.columns(3)
+            c1,c2,c3 = st.columns(3)
             with c1:
                 new_nom = st.text_input("Nom", value=r.get("nom",""), key=f"nom_{pid}")
                 new_tel = st.text_input("Téléphone", value=r.get("telephone",""), key=f"tel_{pid}")
             with c2:
                 new_patho = st.text_input("Pathologie (principale)", value=r.get("pathologie",""), key=f"patho_{pid}")
                 new_niv = st.radio("Priorité", ["Basse","Moyenne","Haute"],
-                                   index=max(0, ["Basse","Moyenne","Haute"].index(r.get("niveau","Basse"))),
+                                   index=max(0,["Basse","Moyenne","Haute"].index(r.get("niveau","Basse"))),
                                    key=f"niv_{pid}", horizontal=True)
             with c3:
                 new_tags = st.text_input("Tags", value=r.get("tags",""), key=f"tags_{pid}")
-                new_rdv = st.date_input("Prochain RDV",
-                                        value=pd.to_datetime(r.get("prochain_rdv")).date() if r.get("prochain_rdv") else None,
-                                        key=f"rdv_{pid}")
+                new_rdv  = st.date_input("Prochain RDV",
+                          value=pd.to_datetime(r.get("prochain_rdv")).date() if r.get("prochain_rdv") else None,
+                          key=f"rdv_{pid}")
             if st.button("💾 Mettre à jour la fiche", key=f"upd_{pid}"):
                 update_patient(pid, {
                     "nom": new_nom, "telephone": new_tel, "pathologie": new_patho,
@@ -343,31 +381,28 @@ def page_list():
                 st.success("Fiche patient mise à jour.")
             st.markdown('</div>', unsafe_allow_html=True)
 
-            # nouvelle consultation
+            # Nouvelle consultation
             st.markdown('<div class="card">', unsafe_allow_html=True)
             st.markdown("**➕ Nouvelle consultation**")
             with st.form(f"addc_{pid}"):
-                cdate = st.date_input("Date de consultation", value=date.today(), key=f"cd_{pid}")
-                clieu = st.radio("Lieu", ["Urgences","Consultation","Bloc"], index=1, key=f"clieu_{pid}", horizontal=True)
+                cdate  = st.date_input("Date de consultation", value=date.today(), key=f"cd_{pid}")
+                clieu  = st.radio("Lieu", ["Urgences","Consultation","Bloc"], index=1, key=f"clieu_{pid}", horizontal=True)
                 cpatho = st.text_input("Pathologie", key=f"cpa_{pid}")
-                cnote = st.text_area("Observation / notes", key=f"cno_{pid}")
-                crdv = st.date_input("Prochain contrôle (optionnel)", key=f"crdv_{pid}")
-                cphotos = st.file_uploader("Photos (multi)", type=["jpg","jpeg","png"],
-                                           accept_multiple_files=True, key=f"cph_{pid}")
+                cnote  = st.text_area("Observation / notes", key=f"cno_{pid}")
+                crdv   = st.date_input("Prochain contrôle (optionnel)", key=f"crdv_{pid}")
+                cphotos= st.file_uploader("Photos (multi)", type=["jpg","jpeg","png"], accept_multiple_files=True, key=f"cph_{pid}")
                 okc = st.form_submit_button("Ajouter à la timeline")
             if okc:
                 media = upload_many(cphotos, f"{new_nom or r['nom']}_{cdate}_{cpatho}_{clieu}")
                 insert_consult({
-                    "id": uuid.uuid4().hex[:8], "patient_id": pid,
-                    "date_consult": str(cdate), "lieu": clieu,
-                    "pathologie": cpatho.strip(), "note": cnote.strip(),
-                    "prochain_rdv": str(crdv) if crdv else None,
-                    "photos": media,
+                    "id": uuid.uuid4().hex[:8],"patient_id": pid,"date_consult": str(cdate),
+                    "lieu": clieu,"pathologie": cpatho.strip(),"note": cnote.strip(),
+                    "prochain_rdv": str(crdv) if crdv else None,"photos": media,
                 })
                 st.success("Consultation ajoutée.")
             st.markdown('</div>', unsafe_allow_html=True)
 
-            # dossier chronologique
+            # Dossier chronologique
             st.markdown('<div class="card">', unsafe_allow_html=True)
             st.markdown("**🗂️ Dossier chronologique**")
             cons = get_consultations(pid)
@@ -378,42 +413,35 @@ def page_list():
                     st.markdown('<div class="card">', unsafe_allow_html=True)
                     st.markdown(f"**📅 {c['date_consult']} — {c.get('lieu','Consultation')} — {c.get('pathologie','')}**")
 
-                    cc1, cc2 = st.columns([2,1])
+                    cc1,cc2 = st.columns([2,1])
                     with cc1:
-                        new_note = st.text_area("Notes", value=c.get("note",""), key=f"cn_{c['id']}")
+                        new_note  = st.text_area("Notes", value=c.get("note",""), key=f"cn_{c['id']}")
                         new_patho = st.text_input("Pathologie", value=c.get("pathologie",""), key=f"cp_{c['id']}")
                     with cc2:
                         idx = {"Urgences":0,"Consultation":1,"Bloc":2}.get(c.get("lieu","Consultation"),1)
-                        new_lieu = st.radio("Lieu", ["Urgences","Consultation","Bloc"], index=idx,
-                                            key=f"cl_{c['id']}", horizontal=True)
-                        new_rdv = st.date_input("Prochain contrôle",
-                                                value=pd.to_datetime(c.get("prochain_rdv")).date() if c.get("prochain_rdv") else None,
-                                                key=f"cr_{c['id']}")
+                        new_lieu = st.radio("Lieu", ["Urgences","Consultation","Bloc"], index=idx, key=f"cl_{c['id']}", horizontal=True)
+                        new_rdv  = st.date_input("Prochain contrôle",
+                                   value=pd.to_datetime(c.get("prochain_rdv")).date() if c.get("prochain_rdv") else None,
+                                   key=f"cr_{c['id']}")
 
-                    colu1, colu2 = st.columns([1,1])
+                    colu1,colu2 = st.columns([1,1])
                     with colu1:
                         if st.button("💾 Mettre à jour", key=f"cu_{c['id']}"):
                             update_consult(c["id"], {
-                                "note": new_note, "pathologie": new_patho,
-                                "lieu": new_lieu, "prochain_rdv": str(new_rdv) if new_rdv else None,
+                                "note": new_note,"pathologie": new_patho,"lieu": new_lieu,
+                                "prochain_rdv": str(new_rdv) if new_rdv else None,
                             })
                             st.success("Consultation mise à jour.")
                     with colu2:
                         if st.button("🗑️ Supprimer", key=f"cdc_{c['id']}"):
-                            for ph in (c.get("photos") or []):
-                                delete_photo(ph["key"])
-                            delete_consult(c["id"])
-                            st.warning("Consultation supprimée.")
+                            for ph in (c.get("photos") or []): delete_photo(ph["key"])
+                            delete_consult(c["id"]); st.warning("Consultation supprimée.")
 
                     st.divider()
-
                     add_more = st.file_uploader("➕ Ajouter des photos", type=["jpg","jpeg","png"],
                                                 accept_multiple_files=True, key=f"addp_{c['id']}")
                     if add_more:
-                        extra = upload_many(
-                            add_more,
-                            f"{r['nom']}_{c['date_consult']}_{c.get('pathologie','')}_{c.get('lieu','Consultation')}",
-                        )
+                        extra = upload_many(add_more, f"{r['nom']}_{c['date_consult']}_{c.get('pathologie','')}_{c.get('lieu','Consultation')}")
                         updated = (c.get("photos") or []) + extra
                         update_consult(c["id"], {"photos": updated})
                         st.success("Photos ajoutées.")
@@ -421,7 +449,7 @@ def page_list():
                     pics = c.get("photos") or []
                     if pics:
                         st.write("**Photos :**")
-                        cols = st.columns(min(4, len(pics)))
+                        cols = st.columns(min(4,len(pics)))
                         for i, ph in enumerate(pics):
                             with cols[i % len(cols)]:
                                 st.image(ph.get("url",""), use_column_width=True)
@@ -437,12 +465,11 @@ def page_agenda():
     st.subheader("📆 Agenda global (RDV & activités)")
     today = date.today()
     month_start = date(today.year, today.month, 1)
-    next_month = (month_start + timedelta(days=32)).replace(day=1)
-    month_end = next_month - timedelta(days=1)
-
-    c1, c2 = st.columns(2)
+    next_month  = (month_start + timedelta(days=32)).replace(day=1)
+    month_end   = next_month - timedelta(days=1)
+    c1,c2 = st.columns(2)
     with c1: d1 = st.date_input("Du", value=month_start)
-    with c2: d2 = st.date_input("Au", value=month_end)
+    with c2: d2 = st.date_input("Au",  value=month_end)
 
     events = get_events(d1, d2)
     if events:
@@ -452,8 +479,8 @@ def page_agenda():
             for _, e in grp.iterrows():
                 txt = f"**{e['title']}**"
                 if e.get("patient_id"): txt += f" • patient: `{e['patient_id']}`"
-                if e.get("notes"): txt += f" — {e['notes']}"
-                colx, coly = st.columns([8,1])
+                if e.get("notes"):      txt += f" — {e['notes']}"
+                colx,coly = st.columns([8,1])
                 with colx: st.write(txt)
                 with coly:
                     if st.button("🗑️", key=f"edelete_{e['id']}"):
@@ -466,10 +493,10 @@ def page_agenda():
     with st.form("adde"):
         etitle = st.text_input("Titre (ex. Contrôle glaucome)")
         estart = st.date_input("Date", value=today)
-        eend = st.date_input("Fin (optionnel)", value=None)
-        eallday = st.checkbox("Toute la journée", value=True)
+        eend   = st.date_input("Fin (optionnel)", value=None)
+        eallday= st.checkbox("Toute la journée", value=True)
         enotes = st.text_input("Notes")
-        epid = st.text_input("ID patient (optionnel)")
+        epid   = st.text_input("ID patient (optionnel)")
         ok = st.form_submit_button("Ajouter")
     if ok:
         insert_event({
@@ -488,22 +515,21 @@ def page_export():
     pts  = get_patients()
     cons = sb.table("consultations").select("*").execute().data or []
     evs  = sb.table("events").select("*").execute().data or []
-
     if pts:
         st.download_button("⬇️ Patients (CSV)", pd.DataFrame(pts).to_csv(index=False).encode("utf-8"),
-                           "patients.csv", "text/csv")
+                           "patients.csv","text/csv")
     if cons:
         st.download_button("⬇️ Consultations (CSV)", pd.DataFrame(cons).to_csv(index=False).encode("utf-8"),
-                           "consultations.csv", "text/csv")
+                           "consultations.csv","text/csv")
     if evs:
         st.download_button("⬇️ Agenda (CSV)", pd.DataFrame(evs).to_csv(index=False).encode("utf-8"),
-                           "agenda.csv", "text/csv")
+                           "agenda.csv","text/csv")
     if not (pts or cons or evs):
         st.info("Rien à exporter pour l’instant.")
 
-    st.markdown("""
-<details>
-<summary><b>Schémas Supabase (rappel)</b></summary>
+    st.markdown(
+        """
+<details><summary><b>Schémas Supabase (rappel)</b></summary>
 
 ```sql
 CREATE TABLE IF NOT EXISTS public.patients(
@@ -527,8 +553,9 @@ CREATE TABLE IF NOT EXISTS public.events(
   notes text, patient_id text, created_at timestamptz default now()
 );
     </details>
-""", unsafe_allow_html=True)
-    
+        """,
+        unsafe_allow_html=True,
+    )
 # ============ ROUTER (avec slide + back) ============
 PAGE = current_page()
 
