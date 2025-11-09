@@ -94,7 +94,7 @@ _configure_page()
 from supabase import create_client, Client
 
 SUPABASE_URL  = st.secrets.get("SUPABASE_URL",  "https://upbbxujsuxduhwaxpnqe.supabase.co")
-SUPABASE_KEY  = st.secrets.get("SUPABASE_ANON_KEY", "")
+SUPABASE_KEY  = st.secrets.get("SUPABASE_ANON_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVwYmJ4dWpzdXhkdWh3YXhwbnFlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjI2MzYyNDgsImV4cCI6MjA3ODIxMjI0OH0.crTLWlZPgV01iDk98EMkXwhmXQASuFfjZ9HMQvcNCrs")
 BUCKET        = st.secrets.get("SUPABASE_BUCKET", "Ophtadossier")  # ⚠️ casse exacte
 
 @st.cache_resource
@@ -252,7 +252,18 @@ def nav_go(to_code: str):
 
 def render_back(page_key: str):
     if page_key != "add":
-        st.markdown('<div class="topbar"><a class="backbtn" data-back href="?p=add">← Retour</a></div>', unsafe_allow_html=True)
+        st.markdown(
+            """
+<div class="topbar">
+  <a class="backbtn" data-back href="#"
+     onclick="event.preventDefault(); try{ sessionStorage.setItem('ophta_nav_dir','back'); }catch(_){}
+              location.search='?p=add';">
+    ← Retour
+  </a>
+</div>
+""",
+            unsafe_allow_html=True,
+        )
 
 def page_wrapper_start():
     css = st.session_state.get("nav_dir","")
@@ -262,15 +273,22 @@ def page_wrapper_end():
     st.markdown('</div>', unsafe_allow_html=True)
 
 def render_nav(active: str):
-    html = ['<nav class="navbar"><div class="navwrap">']
+    # construit les boutons sans "\n" visibles et sans ouvrir de nouvel onglet
+    items = []
     for code, ico, label in PAGES:
-        act = 'active' if code==active else ''
-        html.append(
-            f'<a class="navbtn {act}" data-nav data-code="{code}" href="?p={code}">'
-            f'<span class="ico">{ico}</span>{label}</a>'
+        direction = "forward" if _idx(code) >= _idx(active) else "back"
+        act = "active" if code == active else ""
+        items.append(
+            f"""
+<a class="navbtn {act}" data-nav data-code="{code}" href="#"
+   onclick="event.preventDefault(); try{{ sessionStorage.setItem('ophta_nav_dir','{direction}'); }}catch(_){{
+            }} location.search='?p={code}';">
+   <span class="ico">{ico}</span>{label}
+</a>
+"""
         )
-    html.append('</div></nav>')
-    st.markdown("\\n".join(html), unsafe_allow_html=True)
+    html = '<nav class="navbar"><div class="navwrap">' + "".join(items) + "</div></nav>"
+    st.markdown(html, unsafe_allow_html=True)
 
 # ────────────────────────── PAGES
 def page_add(owner: str):
