@@ -1,4 +1,4 @@
-# app.py — OphtaDossier mobile (bleu médical + slide + retour)
+# app.py — OphtaDossier mobile (bleu médical + slide + retour + login multi-médecins)
 from __future__ import annotations
 import streamlit as st
 import pandas as pd
@@ -47,7 +47,7 @@ section.main>div{padding-top:.5rem!important;padding-bottom:6rem!important}
   background:#fff;border:1px solid var(--line);border-radius:10px;
   text-decoration:none;color:#0f172a;font-weight:700}
 
-/* Bottom nav */
+/* Bottom nav (ancre + JS, pas de nouvel onglet) */
 .navbar{position:fixed;left:0;right:0;bottom:0;z-index:1000;backdrop-filter:blur(10px);
   background:var(--glass);border-top:1px solid var(--line);display:flex;justify-content:space-around;padding:8px 6px}
 .navbtn{flex:1;text-align:center;text-decoration:none!important;color:#334155!important;
@@ -66,18 +66,25 @@ body[data-dir="back"] .appwrap{animation-name:slideInRight}
 
 <script>
 (function(){
-  // garde la direction dans localStorage pour l'animation
+  // 1) Mémorise la direction (pour l'animation)
   const LS="ophta_nav_dir";
   document.addEventListener("click",(e)=>{
     const a=e.target.closest("a[data-nav]");
     const b=e.target.closest("[data-back]");
     if(a){
-      const to=a.getAttribute("data-code")||"";
+      const to=a.getAttribute("data-to")||"";
       const cur=new URLSearchParams(location.search).get("p")||"add";
       if(to && to!==cur){ try{ localStorage.setItem(LS,"forward"); }catch(_){ } }
+      // navigation client sans nouvel onglet
+      e.preventDefault();
+      const u=new URL(window.location);
+      u.searchParams.set("p", to);
+      history.pushState(null, "", u);
+      location.reload();
     }
     if(b){ try{ localStorage.setItem(LS,"back"); }catch(_){ } }
   }, true);
+  // 2) Applique la direction au chargement
   try{
     const dir=localStorage.getItem(LS)||"";
     if(dir){ document.body.setAttribute("data-dir",dir); localStorage.removeItem(LS); }
@@ -91,12 +98,11 @@ configure_page()
 
 # ===================== SUPABASE =====================
 try:
-    from supabase import create_client, Client  # pip: supabase
+    from supabase import create_client, Client
 except Exception as e:
     st.error("⚠️ Le client Supabase n'est pas installé. Ajoute 'supabase' à requirements.txt.")
     raise
 
-# Utilise de préférence st.secrets, sinon constantes ci-dessous
 SUPABASE_URL = st.secrets.get("SUPABASE_URL", "https://upbbxujsuxduhwaxpnqe.supabase.co")
 SUPABASE_ANON_KEY = st.secrets.get("SUPABASE_ANON_KEY",
     "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVwYmJ4dWpzdXhkdWh3YXhwbnFlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjI2MzYyNDgsImV4cCI6MjA3ODIxMjI0OH0.crTLWlZPgV01iDk98EMkXwhmXQASuFfjZ9HMQvcNCrs"
@@ -107,7 +113,51 @@ BUCKET = "Ophtadossier"  # respecte la casse exacte
 def supa() -> Client:
     return create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
 
-sb = supa()  # <-- 'sb' est global et défini
+sb = supa()
+
+# ===================== AUTH (multi-médecins) =====================
+def rehydrate_session():
+    """Réactive la session Supabase à partir des tokens stockés en session_state."""
+    sess = st.session_state.get("sb_session")
+    if sess and "access_token" in sess and "refresh_token" in sess:
+        try:
+            sb.auth.set_session(sess["access_token"], sess["refresh_token"])
+        except Exception:
+            st.session_state.pop("sb_session", None)
+
+def ensure_auth() -> dict | None:
+    """Affiche login si besoin. Retourne l'utilisateur (dict) si connecté."""
+    rehydrate_session()
+    try:
+        u = sb.auth.get_user()
+        if u and u.user:
+            return {"id": u.user.id, "email": u.user.email}
+    except Exception:
+        pass
+
+    st.markdown("### 🔐 Connexion médecin")
+    with st.form("login"):
+        email = st.text_input("Email", autocomplete="username")
+        pwd = st.text_input("Mot de passe", type="password", autocomplete="current-password")
+        remember = st.checkbox("Se souvenir de moi (session navigateur)")
+        ok = st.form_submit_button("Se connecter")
+    if ok:
+        try:
+            res = sb.auth.sign_in_with_password({"email": email.strip(), "password": pwd})
+            if res and res.session:
+                st.session_state["sb_session"] = {
+                    "access_token": res.session.access_token,
+                    "refresh_token": res.session.refresh_token,
+                }
+                st.success("Connecté.")
+                st.rerun()
+        except Exception as e:
+            st.error(f"Échec de connexion : {e}")
+    st.stop()  # bloque l'app tant que non connecté
+
+def uid() -> str:
+    user = ensure_auth()
+    return user["id"]
 
 # ===================== HELPERS =====================
 def clean_filename(text: str) -> str:
@@ -121,7 +171,7 @@ def sb_signed_url(key: str, days: int=365) -> str:
     except Exception:
         return ""
 
-def upload_many(files, base_name: str):
+def upload_many(files, base_name: str, owner: str):
     out = []
     if not files: return out
     safe = clean_filename(base_name)
@@ -129,12 +179,10 @@ def upload_many(files, base_name: str):
         try:
             raw = f.read()
             ext = (f.name.split(".")[-1] or "jpg").lower()
-            key = f"{safe}_{i+1}.{ext}"
-            # compat v2: certains clients n'acceptent pas 'upsert' en file_options
+            key = f"{owner}/{safe}_{i+1}.{ext}"   # <- partition par médecin
             try:
                 sb.storage.from_(BUCKET).upload(key, raw, {"contentType": f.type or "image/jpeg"})
             except Exception:
-                # si le fichier existe déjà, on le supprime puis on ré-uploade
                 try: sb.storage.from_(BUCKET).remove([key])
                 except Exception: pass
                 sb.storage.from_(BUCKET).upload(key, raw, {"contentType": f.type or "image/jpeg"})
@@ -149,39 +197,40 @@ def delete_photo(key: str) -> bool:
     except Exception as e:
         st.error(f"Suppression échouée ({key}) : {e}"); return False
 
-# ===================== DATA ACCESS =====================
+# ===================== DATA ACCESS (scopé par médecin) =====================
 @st.cache_data(ttl=30)
-def get_patients():
-    return (sb.table("patients").select("*").order("created_at", desc=True).execute().data) or []
+def get_patients(user_id: str):
+    return (sb.table("patients").select("*").eq("owner", user_id)
+            .order("created_at", desc=True).execute().data) or []
 
 @st.cache_data(ttl=30)
-def get_consultations(pid: str):
-    return (sb.table("consultations").select("*").eq("patient_id", pid)
+def get_consultations(user_id: str, pid: str):
+    return (sb.table("consultations").select("*").eq("owner", user_id).eq("patient_id", pid)
             .order("date_consult", desc=True).execute().data) or []
 
 def insert_patient(rec: dict):
     st.cache_data.clear()
     sb.table("patients").insert(rec).execute()
 
-def update_patient(pid: str, fields: dict):
+def update_patient(pid: str, fields: dict, user_id: str):
     st.cache_data.clear()
-    sb.table("patients").update(fields).eq("id", pid).execute()
+    sb.table("patients").update(fields).eq("id", pid).eq("owner", user_id).execute()
 
 def insert_consult(c: dict):
     st.cache_data.clear()
     sb.table("consultations").insert(c).execute()
 
-def update_consult(cid: str, fields: dict):
+def update_consult(cid: str, fields: dict, user_id: str):
     st.cache_data.clear()
-    sb.table("consultations").update(fields).eq("id", cid).execute()
+    sb.table("consultations").update(fields).eq("id", cid).eq("owner", user_id).execute()
 
-def delete_consult(cid: str):
+def delete_consult(cid: str, user_id: str):
     st.cache_data.clear()
-    sb.table("consultations").delete().eq("id", cid).execute()
+    sb.table("consultations").delete().eq("id", cid).eq("owner", user_id).execute()
 
 @st.cache_data(ttl=30)
-def get_events(start_d: date | None=None, end_d: date | None=None):
-    q = sb.table("events").select("*")
+def get_events(user_id: str, start_d: date | None=None, end_d: date | None=None):
+    q = sb.table("events").select("*").eq("owner", user_id)
     if start_d: q = q.gte("start_date", str(start_d))
     if end_d:   q = q.lte("start_date", str(end_d))
     return (q.order("start_date").execute().data) or []
@@ -190,36 +239,23 @@ def insert_event(e: dict):
     st.cache_data.clear()
     sb.table("events").insert(e).execute()
 
-def delete_event(eid: str):
+def delete_event(eid: str, user_id: str):
     st.cache_data.clear()
-    sb.table("events").delete().eq("id", eid).execute()
+    sb.table("events").delete().eq("id", eid).eq("owner", user_id).execute()
 
 # ===================== NAVIGATION =====================
-PAGES = [
-    ("add",    "➕", "Ajouter"),
-    ("list",   "🔎", "Patients"),
-    ("agenda", "📆", "Agenda"),
-    ("export", "📤", "Export"),
-]
+PAGES = [("add","➕","Ajouter"),("list","🔎","Patients"),("agenda","📆","Agenda"),("export","📤","Export")]
 
 def current_page() -> str:
     q = st.query_params.get("p", None)
     if q: st.session_state["page"] = q
     return st.session_state.get("page", "add")
 
-def goto(page_key: str):
-    st.session_state["page"] = page_key
-    st.query_params.update({"p": page_key})
-
-def page_wrapper_start():
-    st.markdown('<div class="appwrap">', unsafe_allow_html=True)
-
-def page_wrapper_end():
-    st.markdown('</div>', unsafe_allow_html=True)
+def page_wrapper_start(): st.markdown('<div class="appwrap">', unsafe_allow_html=True)
+def page_wrapper_end():   st.markdown('</div>', unsafe_allow_html=True)
 
 def render_back(page_key: str):
-    root = "add"
-    if page_key != root:
+    if page_key != "add":
         st.markdown('<div class="topbar"><a class="backbtn" data-back href="?p=add">← Retour</a></div>',
                     unsafe_allow_html=True)
 
@@ -227,15 +263,13 @@ def render_nav(active_key: str):
     html = ['<nav class="navbar">']
     for key, ico, label in PAGES:
         cur = 'aria-current="page"' if key == active_key else ""
-        html.append(
-            f'<a class="navbtn" {cur} data-nav data-code="{key}" href="?p={key}">'
-            f'<span class="ico">{ico}</span>{label}</a>'
-        )
+        html.append(f'<a class="navbtn" {cur} data-nav data-to="{key}" href="#"
+                     ><span class="ico">{ico}</span>{label}</a>')
     html.append("</nav>")
     st.markdown("\n".join(html), unsafe_allow_html=True)
 
 # ===================== PAGES =====================
-def page_add():
+def page_add(user_id: str):
     st.subheader("➕ Ajouter un patient")
     with st.form("addp"):
         c1, c2 = st.columns(2)
@@ -259,24 +293,24 @@ def page_add():
             st.warning("⚠️ Le nom est obligatoire."); return
         pid = uuid.uuid4().hex[:8]
         insert_patient({
-            "id": pid, "nom": nom.strip(), "telephone": tel.strip(),
+            "id": pid, "owner": user_id,
+            "nom": nom.strip(), "telephone": tel.strip(),
             "pathologie": patho.strip(), "note": note.strip(),
             "date_consult": str(d_cons), "prochain_rdv": str(d_rdv) if d_rdv else None,
             "niveau": niveau, "tags": tags.strip(),
         })
-        media = upload_many(photos, f"{nom}_{d_cons}_{patho}_{lieu}")
+        media = upload_many(photos, f"{nom}_{d_cons}_{patho}_{lieu}", owner=user_id)
         insert_consult({
-            "id": uuid.uuid4().hex[:8], "patient_id": pid,
+            "id": uuid.uuid4().hex[:8], "owner": user_id, "patient_id": pid,
             "date_consult": str(d_cons), "lieu": lieu,
             "pathologie": patho.strip(), "note": note.strip(),
             "prochain_rdv": str(d_rdv) if d_rdv else None, "photos": media,
         })
         st.success(f"✅ Patient {nom} ajouté (consultation {lieu} du {d_cons}).")
-        goto("list")
 
-def page_list():
+def page_list(user_id: str):
     st.subheader("🔎 Rechercher / Filtrer / Modifier")
-    pts = get_patients()
+    pts = get_patients(user_id)
     if not pts:
         st.info("Aucun patient pour l’instant."); return
 
@@ -329,7 +363,7 @@ def page_list():
                     "nom": new_nom, "telephone": new_tel, "pathologie": new_patho,
                     "niveau": new_niv, "tags": new_tags,
                     "prochain_rdv": str(new_rdv) if new_rdv else None,
-                })
+                }, user_id)
                 st.success("Fiche patient mise à jour.")
             st.markdown('</div>', unsafe_allow_html=True)
 
@@ -347,10 +381,11 @@ def page_list():
                                            accept_multiple_files=True, key=f"cph_{pid}")
                 okc = st.form_submit_button("Ajouter à la timeline")
             if okc:
-                media = upload_many(cphotos, f"{new_nom or r['nom']}_{cdate}_{cpatho}_{clieu}")
+                media = upload_many(cphotos, f"{new_nom or r['nom']}_{cdate}_{cpatho}_{clieu}", owner=user_id)
                 insert_consult({
-                    "id": uuid.uuid4().hex[:8],"patient_id": pid,"date_consult": str(cdate),
-                    "lieu": clieu,"pathologie": cpatho.strip(),"note": cnote.strip(),
+                    "id": uuid.uuid4().hex[:8], "owner": user_id,
+                    "patient_id": pid,"date_consult": str(cdate),"lieu": clieu,
+                    "pathologie": cpatho.strip(),"note": cnote.strip(),
                     "prochain_rdv": str(crdv) if crdv else None,"photos": media,
                 })
                 st.success("Consultation ajoutée.")
@@ -359,7 +394,7 @@ def page_list():
             # Dossier chronologique
             st.markdown('<div class="card">', unsafe_allow_html=True)
             st.markdown("**🗂️ Dossier chronologique**")
-            cons = get_consultations(pid)
+            cons = get_consultations(user_id, pid)
             if not cons:
                 st.info("Aucune consultation enregistrée.")
             else:
@@ -386,21 +421,22 @@ def page_list():
                                 "note": new_note, "pathologie": new_patho,
                                 "lieu": new_lieu,
                                 "prochain_rdv": str(new_rdv) if new_rdv else None,
-                            })
+                            }, user_id)
                             st.success("Consultation mise à jour.")
                     with colu2:
                         if st.button("🗑️ Supprimer", key=f"cdc_{c['id']}"):
                             for ph in (c.get("photos") or []): delete_photo(ph["key"])
-                            delete_consult(c["id"]); st.warning("Consultation supprimée.")
+                            delete_consult(c["id"], user_id); st.warning("Consultation supprimée.")
 
                     st.divider()
 
                     add_more = st.file_uploader("➕ Ajouter des photos", type=["jpg","jpeg","png"],
                                                 accept_multiple_files=True, key=f"addp_{c['id']}")
                     if add_more:
-                        extra = upload_many(add_more, f"{r['nom']}_{c['date_consult']}_{c.get('pathologie','')}_{c.get('lieu','Consultation')}")
+                        extra = upload_many(add_more, f"{r['nom']}_{c['date_consult']}_{c.get('pathologie','')}_{c.get('lieu','Consultation')}",
+                                            owner=user_id)
                         updated = (c.get("photos") or []) + extra
-                        update_consult(c["id"], {"photos": updated})
+                        update_consult(c["id"], {"photos": updated}, user_id)
                         st.success("Photos ajoutées.")
 
                     pics = c.get("photos") or []
@@ -413,12 +449,12 @@ def page_list():
                                 if st.button("🗑️ Supprimer", key=f"del_{c['id']}_{i}"):
                                     if delete_photo(ph["key"]):
                                         new_list = [x for x in pics if x["key"] != ph["key"]]
-                                        update_consult(c["id"], {"photos": new_list})
+                                        update_consult(c["id"], {"photos": new_list}, user_id)
                                         st.success("Photo supprimée.")
                     st.markdown('</div>', unsafe_allow_html=True)
             st.markdown('</div>', unsafe_allow_html=True)
 
-def page_agenda():
+def page_agenda(user_id: str):
     st.subheader("📆 Agenda global (RDV & activités)")
     today = date.today()
     month_start = date(today.year, today.month, 1)
@@ -429,7 +465,7 @@ def page_agenda():
     with c1: d1 = st.date_input("Du", value=month_start)
     with c2: d2 = st.date_input("Au", value=month_end)
 
-    events = get_events(d1, d2)
+    events = get_events(user_id, d1, d2)
     if events:
         df = pd.DataFrame(events)
         for day, grp in df.groupby("start_date"):
@@ -442,7 +478,7 @@ def page_agenda():
                 with colx: st.write(txt)
                 with coly:
                     if st.button("🗑️", key=f"edelete_{e['id']}"):
-                        delete_event(e["id"]); st.warning("Événement supprimé.")
+                        delete_event(e["id"], user_id); st.warning("Événement supprimé.")
     else:
         st.info("Aucun événement dans cette période.")
 
@@ -458,21 +494,18 @@ def page_agenda():
         ok = st.form_submit_button("Ajouter")
     if ok:
         insert_event({
-            "id": uuid.uuid4().hex[:8],
-            "title": etitle.strip(),
-            "start_date": str(estart),
-            "end_date": str(eend) if eend else None,
-            "all_day": bool(eallday),
-            "notes": enotes.strip(),
-            "patient_id": epid.strip() or None,
+            "id": uuid.uuid4().hex[:8], "owner": user_id,
+            "title": etitle.strip(), "start_date": str(estart),
+            "end_date": str(eend) if eend else None, "all_day": bool(eallday),
+            "notes": enotes.strip(), "patient_id": epid.strip() or None,
         })
         st.success("Événement ajouté.")
 
-def page_export():
+def page_export(user_id: str):
     st.subheader("📤 Export")
-    pts = get_patients()
-    cons = sb.table("consultations").select("*").execute().data or []
-    evs = sb.table("events").select("*").execute().data or []
+    pts = get_patients(user_id)
+    cons = sb.table("consultations").select("*").eq("owner", user_id).execute().data or []
+    evs = sb.table("events").select("*").eq("owner", user_id).execute().data or []
 
     if pts:
         st.download_button("⬇️ Patients (CSV)", pd.DataFrame(pts).to_csv(index=False).encode("utf-8"),
@@ -494,6 +527,7 @@ def page_export():
 ```sql
 CREATE TABLE IF NOT EXISTS public.patients(
   id text primary key,
+  owner uuid default auth.uid(),                     -- <- propriétaire
   nom text, telephone text, pathologie text, note text,
   date_consult date, prochain_rdv date, niveau text, tags text,
   created_at timestamptz default now()
@@ -501,6 +535,7 @@ CREATE TABLE IF NOT EXISTS public.patients(
 
 CREATE TABLE IF NOT EXISTS public.consultations(
   id text primary key,
+  owner uuid default auth.uid(),                     -- <- propriétaire
   patient_id text references public.patients(id) on delete cascade,
   date_consult date, lieu text, pathologie text, note text,
   prochain_rdv date, photos jsonb default '[]'::jsonb,
@@ -509,6 +544,7 @@ CREATE TABLE IF NOT EXISTS public.consultations(
 
 CREATE TABLE IF NOT EXISTS public.events(
   id text primary key,
+  owner uuid default auth.uid(),                     -- <- propriétaire
   title text, start_date date, end_date date, all_day boolean,
   notes text, patient_id text, created_at timestamptz default now()
 );
@@ -517,20 +553,31 @@ CREATE TABLE IF NOT EXISTS public.events(
         unsafe_allow_html=True,
     )
 # ========= ROUTER =========
+user_id = uid()                  # force login (et réhydrate)
 PAGE = current_page()
 page_wrapper_start()
 render_back(PAGE)
 
+if "show_logout" not in st.session_state:
+st.session_state["show_logout"] = False
+with st.expander("Compte", expanded=False):
+if st.button("🔓 Se déconnecter"):
+try: sb.auth.sign_out()
+except Exception: pass
+for k in ("sb_session","page"): st.session_state.pop(k, None)
+st.success("Déconnecté.")
+st.rerun()
+
 if PAGE == "add":
-    page_add()
+    page_add(user_id)
 elif PAGE == "list":
-    page_list()
+    page_list(user_id)
 elif PAGE == "agenda":
-    page_agenda()
+    page_agenda(user_id)
 elif PAGE == "export":
-    page_export()
+    page_export(user_id)
 else:
-    page_add()
+    page_add(user_id)
 
 page_wrapper_end()
 render_nav(PAGE)
