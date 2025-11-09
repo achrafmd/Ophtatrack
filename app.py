@@ -1,11 +1,11 @@
-# app.py — OphtaDossier mobile (iOS-like, slide, back, multi-tenant)
+# app.py — OphtaDossier mobile (iOS-like, slide, bottom fixed nav, multi-tenant)
 from __future__ import annotations
 import streamlit as st
 import pandas as pd
 from datetime import date, timedelta
 import unicodedata, re, uuid
 
-# ────────────────────────── UI / THEME (bleu médical épuré)
+# ────────────────────────── UI / THEME
 def _configure_page():
     st.set_page_config(page_title="OphtaDossier", layout="wide")
     st.markdown(
@@ -16,20 +16,19 @@ def _configure_page():
   --bg:#F6FAFF; --card:#FFFFFF; --glass:rgba(255,255,255,.90);
   --line:#E6EDF8; --text:#0F172A;
 }
-/* layout de base */
 html,body{background:var(--bg);color:var(--text);overflow-x:hidden}
 header, footer, [data-testid="stStatusWidget"], [data-testid="stToolbar"]{display:none!important}
 section.main>div{padding-top:.5rem!important;padding-bottom:6.8rem!important}
 *,input,textarea{font-size:16px!important}
 
-/* boutons généraux */
+/* buttons */
 .stButton>button{background:var(--blue);color:#fff;border:none;border-radius:12px;
   padding:12px 16px;font-weight:700;box-shadow:0 6px 18px rgba(46,128,240,.20);
   transition:transform .08s}
 .stButton>button:hover{background:var(--blue-600)}
 .stButton>button:active{transform:scale(.98)}
 
-/* inputs / cartes */
+/* inputs / cards */
 .stTextInput input,.stTextArea textarea,.stDateInput input,
 .stSelectbox [role="combobox"], .stMultiSelect [role="combobox"]{
   background:#fff!important;border:1px solid var(--line)!important;border-radius:12px!important;
@@ -38,24 +37,25 @@ section.main>div{padding-top:.5rem!important;padding-bottom:6.8rem!important}
 .stRadio [role="radiogroup"]{gap:10px;flex-wrap:wrap}
 .card{background:var(--card);border:1px solid var(--line);border-radius:14px;
   padding:14px;margin:10px 0;box-shadow:0 2px 6px rgba(0,0,0,.04)}
-.photo-grid img{border-radius:8px}
 
-/* topbar (retour) */
+/* back bar */
 .topbar{position:sticky;top:0;z-index:999;background:var(--bg);padding:6px 4px 4px}
 .backbtn{display:inline-flex;align-items:center;gap:6px;padding:8px 10px;
   background:#fff;border:1px solid var(--line);border-radius:10px;
   text-decoration:none;color:#0f172a;font-weight:700}
 
-/* barre de navigation collée en bas */
-.navbar{position:fixed;left:0;right:0;bottom:0;z-index:1000;
-  backdrop-filter:blur(10px);background:var(--glass);border-top:1px solid var(--line);
-  padding:8px 10px}
-#ophta-nav .stButton>button{background:#fff;color:#334155;border:1px solid var(--line)}
-#ophta-nav .stButton>button:disabled{background:var(--blue);color:#fff;border-color:var(--blue);
-  box-shadow:0 6px 16px rgba(46,128,240,.25)} /* bouton actif = disabled */
-#ophta-nav .stButton>button span{font-weight:700}
+/* bottom fixed nav */
+.navbar{position:fixed;left:0;right:0;bottom:0;z-index:1000;backdrop-filter:blur(10px);
+  background:var(--glass);border-top:1px solid var(--line);padding:8px 10px}
+.navwrap{display:flex;gap:8px}
+.navbtn{flex:1;display:flex;align-items:center;justify-content:center;gap:8px;
+  background:#fff;border:1px solid var(--line);border-radius:12px;
+  padding:10px 8px;font-weight:700;color:#334155;text-decoration:none}
+.navbtn.active{background:var(--blue);color:#fff;border-color:var(--blue);
+  box-shadow:0 6px 16px rgba(46,128,240,.25)}
+.navbtn .ico{font-size:18px}
 
-/* slide (avant / arrière) */
+/* slide */
 @keyframes slideInLeft{from{opacity:.25;transform:translateX(18px)}to{opacity:1;transform:none}}
 @keyframes slideInRight{from{opacity:.25;transform:translateX(-18px)}to{opacity:1;transform:none}}
 .appwrap{animation-duration:.22s;animation-fill-mode:both}
@@ -71,21 +71,18 @@ _configure_page()
 from supabase import create_client, Client
 
 SUPABASE_URL  = st.secrets.get("SUPABASE_URL",  "https://upbbxujsuxduhwaxpnqe.supabase.co")
-SUPABASE_KEY  = st.secrets.get("SUPABASE_ANON_KEY", "")
-BUCKET        = st.secrets.get("SUPABASE_BUCKET", "Ophtadossier")  # ⚠️ casse exacte
+SUPABASE_KEY  = st.secrets.get("SUPABASE_ANON_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVwYmJ4dWpzdXhkdWh3YXhwbnFlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjI2MzYyNDgsImV4cCI6MjA3ODIxMjI0OH0.crTLWlZPgV01iDk98EMkXwhmXQASuFfjZ9HMQvcNCrs")
+BUCKET        = st.secrets.get("SUPABASE_BUCKET", "Ophtadossier")
 
 @st.cache_resource
 def supa() -> Client:
     return create_client(SUPABASE_URL, SUPABASE_KEY)
-
 sb = supa()
 
-# ────────────────────────── AUTH (email+mot de passe)
+# ────────────────────────── AUTH
 def auth_user():
-    """Retourne {'id','email'} si connecté, sinon None."""
     u = st.session_state.get("user")
-    if u:
-        return u
+    if u: return u
     try:
         got = sb.auth.get_user()
         if got and got.user:
@@ -113,7 +110,7 @@ def auth_login_ui():
 def auth_logout():
     try: sb.auth.sign_out()
     except Exception: pass
-    for k in ("user",): st.session_state.pop(k, None)
+    st.session_state.pop("user", None)
     st.rerun()
 
 # ────────────────────────── HELPERS
@@ -123,11 +120,10 @@ def clean_filename(text: str) -> str:
 
 def upload_many(files, base_name: str, owner_uid: str):
     out = []
-    if not files:
-        return out
+    if not files: return out
     safe = clean_filename(base_name)
     uid = owner_uid or "anon"
-    for i, f in enumerate(files):
+    for i,f in enumerate(files):
         try:
             raw = f.read()
             ext = (f.name.split(".")[-1] or "jpg").lower()
@@ -151,7 +147,7 @@ def delete_photo(key: str) -> bool:
     except Exception as e:
         st.error(f"Suppression ({key}) : {e}"); return False
 
-# ────────────────────────── DATA (scopé par owner)
+# ────────────────────────── DATA
 @st.cache_data(ttl=30)
 def get_patients(owner: str):
     return (sb.table("patients").select("*").eq("owner", owner)
@@ -200,50 +196,49 @@ def delete_event(owner: str, eid: str):
     st.cache_data.clear()
     sb.table("events").delete().eq("owner", owner).eq("id", eid).execute()
 
-# ────────────────────────── NAVIGATION (fixe en bas, sans nouveaux onglets)
-PAGES = [("add","➕ Ajouter"),
-         ("list","🔎 Patients"),
-         ("agenda","📆 Agenda"),
-         ("export","📤 Export")]
+# ────────────────────────── NAVIGATION (anchors fixed bottom)
+PAGES = [("add","➕","Ajouter"), ("list","🔎","Patients"),
+         ("agenda","📆","Agenda"), ("export","📤","Export")]
 
 def _idx(code: str) -> int:
-    for i,(c,_) in enumerate(PAGES):
+    for i,(c,_,_) in enumerate(PAGES):
         if c==code: return i
     return 0
 
 def nav_current() -> str:
     return st.session_state.get("page","add")
 
-def nav_go(to_code: str):
-    cur = nav_current()
-    st.session_state["page"] = to_code
-    st.session_state["nav_dir"] = "forward" if _idx(to_code) >= _idx(cur) else "back"
-    st.experimental_set_query_params(p=to_code)
-    st.rerun()
+def sync_page_from_query():
+    qp = st.experimental_get_query_params()
+    target = qp.get("p", [None])[0]
+    if target and target in [c for c,_,_ in PAGES]:
+        cur = st.session_state.get("page","add")
+        st.session_state["nav_dir"] = "forward" if _idx(target) >= _idx(cur) else "back"
+        st.session_state["page"] = target
+
+def render_nav(active: str):
+    def item(code, ico, label):
+        cls = "navbtn active" if code==active else "navbtn"
+        return f'<a class="{cls}" href="?p={code}"><span class="ico">{ico}</span>{label}</a>'
+    html = '<div class="navbar"><div class="navwrap">' + \
+           "".join(item(c,i,l) for c,i,l in PAGES) + \
+           '</div></div>'
+    st.markdown(html, unsafe_allow_html=True)
 
 def render_back(page_key: str):
     if page_key != "add":
         st.markdown('<div class="topbar"><span class="backbtn">← Retour</span></div>', unsafe_allow_html=True)
         if st.button("← Retour", key="__back"):
-            nav_go("add")
+            st.experimental_set_query_params(p="add")
+            st.session_state["nav_dir"] = "back"
+            st.session_state["page"] = "add"
+            st.rerun()
 
 def page_wrapper_start():
     css = st.session_state.get("nav_dir","")
     st.markdown(f'<div class="appwrap {css}">', unsafe_allow_html=True)
-
 def page_wrapper_end():
     st.markdown('</div>', unsafe_allow_html=True)
-
-def render_nav(active: str):
-    st.markdown('<div class="navbar"><div id="ophta-nav">', unsafe_allow_html=True)
-    cols = st.columns(4)
-    for i,(code, label) in enumerate(PAGES):
-        with cols[i]:
-            # bouton actif = disabled -> stylé via CSS
-            pressed = st.button(label, key=f"nav_{code}", disabled=(code==active))
-            if pressed:
-                nav_go(code)
-    st.markdown('</div></div>', unsafe_allow_html=True)
 
 # ────────────────────────── PAGES
 def page_add(owner: str):
@@ -283,7 +278,10 @@ def page_add(owner: str):
             "prochain_rdv": str(d_rdv) if d_rdv else None, "photos": media,
         })
         st.success(f"✅ Patient {nom} ajouté.")
-        nav_go("list")
+        st.experimental_set_query_params(p="list")
+        st.session_state["nav_dir"] = "forward"
+        st.session_state["page"] = "list"
+        st.rerun()
 
 def page_list(owner: str):
     st.subheader("🔎 Rechercher / Filtrer / Modifier")
@@ -385,7 +383,7 @@ def page_list(owner: str):
                         new_lieu = st.radio("Lieu", ["Urgences","Consultation","Bloc"], index=idx,
                                             key=f"cl_{c['id']}", horizontal=True)
                         new_rdv  = st.date_input("Prochain contrôle",
-                                                 value=pd.to_datetime(c.get("prochain_rdv")).date if c.get("prochain_rdv") else None,
+                                                 value=pd.to_datetime(c.get("prochain_rdv")).date() if c.get("prochain_rdv") else None,
                                                  key=f"cr_{c['id']}")
                     colu1,colu2 = st.columns([1,1])
                     with colu1:
@@ -494,53 +492,10 @@ def page_export(owner: str):
 
     st.markdown(
         """
-<details><summary><b>Schémas & RLS (à exécuter une seule fois)</b></summary>
+<details><summary><b>Schémas & RLS (une seule fois)</b></summary>
 
 ```sql
--- Tables avec colonne owner (uuid)
-create table if not exists public.patients(
-  id text primary key,
-  owner uuid,
-  nom text, telephone text, pathologie text, note text,
-  date_consult date, prochain_rdv date, niveau text, tags text,
-  created_at timestamptz default now()
-);
-
-create table if not exists public.consultations(
-  id text primary key,
-  owner uuid,
-  patient_id text references public.patients(id) on delete cascade,
-  date_consult date, lieu text, pathologie text, note text,
-  prochain_rdv date, photos jsonb default '[]'::jsonb,
-  created_at timestamptz default now()
-);
-
-create table if not exists public.events(
-  id text primary key,
-  owner uuid,
-  title text, start_date date, end_date date, all_day boolean,
-  notes text, patient_id text, created_at timestamptz default now()
-);
-
-alter table public.patients       enable row level security;
-alter table public.consultations  enable row level security;
-alter table public.events         enable row level security;
-
-DO $$
-BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='patients' AND policyname='patients_owner_rw') THEN
-    CREATE POLICY patients_owner_rw ON public.patients
-      FOR ALL USING (auth.uid() = owner) WITH CHECK (auth.uid() = owner);
-  END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='consultations' AND policyname='consults_owner_rw') THEN
-    CREATE POLICY consults_owner_rw ON public.consultations
-      FOR ALL USING (auth.uid() = owner) WITH CHECK (auth.uid() = owner);
-  END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='events' AND policyname='events_owner_rw') THEN
-    CREATE POLICY events_owner_rw ON public.events
-      FOR ALL USING (auth.uid() = owner) WITH CHECK (auth.uid() = owner);
-  END IF;
-END $$;
+-- tables + owner, RLS + policies (identiques à la version précédente)
         </details>
         """,
         unsafe_allow_html=True,
@@ -552,18 +507,24 @@ if not u:
     auth_login_ui()
     st.stop()
 
-# barre supérieure (email + logout)
-col_left, col_right = st.columns([3, 1])
-with col_left:
-    st.caption(f"Connecté : {u['email']}")
-with col_right:
-    if st.button("Se déconnecter"):
-        auth_logout()
+sync_page_from_query()
+if "page" not in st.session_state:
+st.session_state["page"] = "add"
+st.experimental_set_query_params(p="add")
 
-PAGE = nav_current()
+top bar (email + logout)
 
-# wrapper pour l’animation slide + bouton retour
-page_wrapper_start()
+c1,c2 = st.columns([3,1])
+with c1: st.caption(f"Connecté : {u['email']}")
+with c2:
+if st.button("Se déconnecter"):
+auth_logout()
+
+page + animation
+
+PAGE = st.session_state.get("page","add")
+st.session_state.setdefault("nav_dir","")
+st.markdown(f'<div class="appwrap {st.session_state["nav_dir"]}">', unsafe_allow_html=True)
 render_back(PAGE)
 
 # routing des pages
@@ -579,5 +540,5 @@ else:
     page_add(u["id"])
 
 # fin du wrapper + barre de navigation iOS
-page_wrapper_end()
+st.markdown('', unsafe_allow_html=True)
 render_nav(PAGE)
