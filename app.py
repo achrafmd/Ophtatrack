@@ -16,6 +16,7 @@ def _configure_page():
   --bg:#F6FAFF; --card:#FFFFFF; --glass:rgba(255,255,255,.90);
   --line:#E6EDF8; --text:#0F172A;
 }
+/* layout de base */
 html,body{background:var(--bg);color:var(--text);overflow-x:hidden}
 header, footer, [data-testid="stStatusWidget"], [data-testid="stToolbar"]{display:none!important}
 section.main>div{padding-top:.5rem!important;padding-bottom:6.8rem!important}
@@ -28,14 +29,13 @@ section.main>div{padding-top:.5rem!important;padding-bottom:6.8rem!important}
 .stButton>button:hover{background:var(--blue-600)}
 .stButton>button:active{transform:scale(.98)}
 
-/* inputs */
+/* inputs / cartes */
 .stTextInput input,.stTextArea textarea,.stDateInput input,
 .stSelectbox [role="combobox"], .stMultiSelect [role="combobox"]{
   background:#fff!important;border:1px solid var(--line)!important;border-radius:12px!important;
   padding:12px 12px!important
 }
 .stRadio [role="radiogroup"]{gap:10px;flex-wrap:wrap}
-
 .card{background:var(--card);border:1px solid var(--line);border-radius:14px;
   padding:14px;margin:10px 0;box-shadow:0 2px 6px rgba(0,0,0,.04)}
 .photo-grid img{border-radius:8px}
@@ -46,56 +46,22 @@ section.main>div{padding-top:.5rem!important;padding-bottom:6.8rem!important}
   background:#fff;border:1px solid var(--line);border-radius:10px;
   text-decoration:none;color:#0f172a;font-weight:700}
 
-<!-- bottom nav iOS (version <a.navbtn>) -->
-<style>
-.navbar{
-  position:fixed;left:0;right:0;bottom:0;
-  z-index:2000; /* au-dessus du bouton "Manage app" */
-  backdrop-filter:blur(10px);
-  background:var(--glass);
-  border-top:1px solid var(--line);
-  padding:8px 6px
-}
-.navwrap{display:flex;gap:8px}
-.navbtn{
-  flex:1; display:block; text-align:center; text-decoration:none!important;
-  background:#fff; color:#334155!important; border:1px solid var(--line);
-  border-radius:12px; padding:8px 6px; font-weight:700
-}
-.navbtn.active{
-  background:var(--blue); color:#fff!important; border-color:var(--blue);
-  box-shadow:0 6px 16px rgba(46,128,240,.25)
-}
-.navbtn .ico{display:block; font-size:20px; line-height:1.2}
-</style>
-/* slide (avant/arrière) */
+/* barre de navigation collée en bas */
+.navbar{position:fixed;left:0;right:0;bottom:0;z-index:1000;
+  backdrop-filter:blur(10px);background:var(--glass);border-top:1px solid var(--line);
+  padding:8px 10px}
+#ophta-nav .stButton>button{background:#fff;color:#334155;border:1px solid var(--line)}
+#ophta-nav .stButton>button:disabled{background:var(--blue);color:#fff;border-color:var(--blue);
+  box-shadow:0 6px 16px rgba(46,128,240,.25)} /* bouton actif = disabled */
+#ophta-nav .stButton>button span{font-weight:700}
+
+/* slide (avant / arrière) */
 @keyframes slideInLeft{from{opacity:.25;transform:translateX(18px)}to{opacity:1;transform:none}}
 @keyframes slideInRight{from{opacity:.25;transform:translateX(-18px)}to{opacity:1;transform:none}}
 .appwrap{animation-duration:.22s;animation-fill-mode:both}
-body[data-dir="forward"] .appwrap{animation-name:slideInLeft}
-body[data-dir="back"]    .appwrap{animation-name:slideInRight}
+.appwrap.forward{animation-name:slideInLeft}
+.appwrap.back{animation-name:slideInRight}
 </style>
-
-<script>
-(function(){
-  // petite logique pour direction de slide avec des <a data-nav>
-  const LS="ophta_nav_dir";
-  document.addEventListener("click",(e)=>{
-    const a=e.target.closest("a[data-nav]");
-    const b=e.target.closest("[data-back]");
-    if(a){
-      const to=a.getAttribute("data-code")||"";
-      const cur=new URLSearchParams(location.search).get("p")||"add";
-      if(to && to!==cur){ try{ sessionStorage.setItem(LS,"forward"); }catch(_){ } }
-    }
-    if(b){ try{ sessionStorage.setItem(LS,"back"); }catch(_){ } }
-  }, true);
-  try{
-    const dir=sessionStorage.getItem(LS)||"";
-    if(dir){ document.body.setAttribute("data-dir",dir); sessionStorage.removeItem(LS); }
-  }catch(_){}
-})();
-</script>
         """,
         unsafe_allow_html=True,
     )
@@ -105,7 +71,7 @@ _configure_page()
 from supabase import create_client, Client
 
 SUPABASE_URL  = st.secrets.get("SUPABASE_URL",  "https://upbbxujsuxduhwaxpnqe.supabase.co")
-SUPABASE_KEY  = st.secrets.get("SUPABASE_ANON_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVwYmJ4dWpzdXhkdWh3YXhwbnFlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjI2MzYyNDgsImV4cCI6MjA3ODIxMjI0OH0.crTLWlZPgV01iDk98EMkXwhmXQASuFfjZ9HMQvcNCrs")
+SUPABASE_KEY  = st.secrets.get("SUPABASE_ANON_KEY", "")
 BUCKET        = st.secrets.get("SUPABASE_BUCKET", "Ophtadossier")  # ⚠️ casse exacte
 
 @st.cache_resource
@@ -147,27 +113,20 @@ def auth_login_ui():
 def auth_logout():
     try: sb.auth.sign_out()
     except Exception: pass
-    st.session_state.pop("user", None)
+    for k in ("user",): st.session_state.pop(k, None)
     st.rerun()
 
 # ────────────────────────── HELPERS
-def _slug(text: str) -> str:
+def clean_filename(text: str) -> str:
     text = unicodedata.normalize("NFKD", text or "").encode("ascii","ignore").decode("ascii")
     return re.sub(r"[^A-Za-z0-9._-]+", "_", text).strip("_")
-
-def _signed_url(key: str, days=365) -> str:
-    try:
-        r = sb.storage.from_(BUCKET).create_signed_url(key, 60*60*24*days)
-        return r.get("signedURL") or r.get("signed_url") or ""
-    except Exception:
-        return ""
 
 def upload_many(files, base_name: str, owner_uid: str):
     out = []
     if not files:
         return out
-    safe = _slug(base_name)
-    uid  = owner_uid or "anon"
+    safe = clean_filename(base_name)
+    uid = owner_uid or "anon"
     for i, f in enumerate(files):
         try:
             raw = f.read()
@@ -179,7 +138,8 @@ def upload_many(files, base_name: str, owner_uid: str):
                 try: sb.storage.from_(BUCKET).remove([key])
                 except Exception: pass
                 sb.storage.from_(BUCKET).upload(key, raw, {"contentType": f.type or "image/jpeg"})
-            url = _signed_url(key)
+            signed = sb.storage.from_(BUCKET).create_signed_url(key, 60*60*24*365)
+            url = signed.get("signedURL") or signed.get("signed_url") or ""
             out.append({"key": key, "url": url})
         except Exception as e:
             st.error(f"Erreur upload {getattr(f,'name','(fichier)')} : {e}")
@@ -240,41 +200,32 @@ def delete_event(owner: str, eid: str):
     st.cache_data.clear()
     sb.table("events").delete().eq("owner", owner).eq("id", eid).execute()
 
-# ────────────────────────── NAVIGATION (ancres HTML – même onglet)
-PAGES = [("add","➕","Ajouter"), ("list","🔎","Patients"),
-         ("agenda","📆","Agenda"), ("export","📤","Export")]
+# ────────────────────────── NAVIGATION (fixe en bas, sans nouveaux onglets)
+PAGES = [("add","➕ Ajouter"),
+         ("list","🔎 Patients"),
+         ("agenda","📆 Agenda"),
+         ("export","📤 Export")]
 
 def _idx(code: str) -> int:
-    for i,(c,_,_) in enumerate(PAGES):
+    for i,(c,_) in enumerate(PAGES):
         if c==code: return i
     return 0
 
 def nav_current() -> str:
-    q = st.query_params.get("p", None)
-    if q: st.session_state["page"] = q
     return st.session_state.get("page","add")
 
 def nav_go(to_code: str):
     cur = nav_current()
     st.session_state["page"] = to_code
     st.session_state["nav_dir"] = "forward" if _idx(to_code) >= _idx(cur) else "back"
-    st.query_params.update({"p": to_code})
+    st.experimental_set_query_params(p=to_code)
     st.rerun()
 
 def render_back(page_key: str):
     if page_key != "add":
-        st.markdown(
-            """
-<div class="topbar">
-  <a class="backbtn" data-back href="#"
-     onclick="event.preventDefault(); try{ sessionStorage.setItem('ophta_nav_dir','back'); }catch(_){}
-              location.search='?p=add';">
-    ← Retour
-  </a>
-</div>
-""",
-            unsafe_allow_html=True,
-        )
+        st.markdown('<div class="topbar"><span class="backbtn">← Retour</span></div>', unsafe_allow_html=True)
+        if st.button("← Retour", key="__back"):
+            nav_go("add")
 
 def page_wrapper_start():
     css = st.session_state.get("nav_dir","")
@@ -284,24 +235,15 @@ def page_wrapper_end():
     st.markdown('</div>', unsafe_allow_html=True)
 
 def render_nav(active: str):
-    # construit des liens ancrés qui ne déclenchent pas de nouvel onglet
-    items = []
-    for code, ico, label in PAGES:
-        direction = "forward" if _idx(code) >= _idx(active) else "back"
-        act = "active" if code == active else ""
-        items.append(
-            f"""
-<a class="navbtn {act}" data-nav data-code="{code}" href="#"
-   onclick="event.preventDefault();
-            try{{ sessionStorage.setItem('ophta_nav_dir','{direction}'); }}catch(_){{
-            }}
-            location.search='?p={code}';">
-   <span class="ico">{ico}</span>{label}
-</a>
-"""
-        )
-    html = '<nav class="navbar"><div class="navwrap">' + "".join(items) + "</div></nav>"
-    st.markdown(html, unsafe_allow_html=True)
+    st.markdown('<div class="navbar"><div id="ophta-nav">', unsafe_allow_html=True)
+    cols = st.columns(4)
+    for i,(code, label) in enumerate(PAGES):
+        with cols[i]:
+            # bouton actif = disabled -> stylé via CSS
+            pressed = st.button(label, key=f"nav_{code}", disabled=(code==active))
+            if pressed:
+                nav_go(code)
+    st.markdown('</div></div>', unsafe_allow_html=True)
 
 # ────────────────────────── PAGES
 def page_add(owner: str):
@@ -443,7 +385,7 @@ def page_list(owner: str):
                         new_lieu = st.radio("Lieu", ["Urgences","Consultation","Bloc"], index=idx,
                                             key=f"cl_{c['id']}", horizontal=True)
                         new_rdv  = st.date_input("Prochain contrôle",
-                                                 value=pd.to_datetime(c.get("prochain_rdv")).date() if c.get("prochain_rdv") else None,
+                                                 value=pd.to_datetime(c.get("prochain_rdv")).date if c.get("prochain_rdv") else None,
                                                  key=f"cr_{c['id']}")
                     colu1,colu2 = st.columns([1,1])
                     with colu1:
@@ -584,26 +526,17 @@ alter table public.patients       enable row level security;
 alter table public.consultations  enable row level security;
 alter table public.events         enable row level security;
 
--- Policies via DO $$ (évite "if not exists")
 DO $$
 BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='patients' AND policyname='patients_owner_rw'
-  ) THEN
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='patients' AND policyname='patients_owner_rw') THEN
     CREATE POLICY patients_owner_rw ON public.patients
       FOR ALL USING (auth.uid() = owner) WITH CHECK (auth.uid() = owner);
   END IF;
-
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='consultations' AND policyname='consults_owner_rw'
-  ) THEN
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='consultations' AND policyname='consults_owner_rw') THEN
     CREATE POLICY consults_owner_rw ON public.consultations
       FOR ALL USING (auth.uid() = owner) WITH CHECK (auth.uid() = owner);
   END IF;
-
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='events' AND policyname='events_owner_rw'
-  ) THEN
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='events' AND policyname='events_owner_rw') THEN
     CREATE POLICY events_owner_rw ON public.events
       FOR ALL USING (auth.uid() = owner) WITH CHECK (auth.uid() = owner);
   END IF;
