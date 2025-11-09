@@ -46,25 +46,45 @@ section.main>div{padding-top:.5rem!important;padding-bottom:6.8rem!important}
   background:#fff;border:1px solid var(--line);border-radius:10px;
   text-decoration:none;color:#0f172a;font-weight:700}
 
-/* --- NAV FIXE --- */
-.navbar{position:fixed;left:0;right:0;z-index:1000;backdrop-filter:blur(10px);
-  background:var(--glass);border-top:1px solid var(--line);padding:8px 10px}
-.navbar.bottom{bottom:0}
-.navbar.top{top:0;border-top:none;border-bottom:1px solid var(--line)}
+/* bottom nav iOS (100% HTML – pas de st.button ici) */
+.navbar{position:fixed;left:0;right:0;bottom:0;z-index:1000;backdrop-filter:blur(10px);
+  background:var(--glass);border-top:1px solid var(--line);padding:8px 8px}
 .navwrap{display:flex;gap:8px}
-.navbtn{flex:1;border:none;border-radius:12px;padding:8px 6px;font-weight:700;
-  background:#fff;color:#334155;text-decoration:none;display:block;text-align:center}
-.navbtn.active{background:var(--blue);color:#fff;box-shadow:0 6px 16px rgba(46,128,240,.25)}
-.navbtn .ico{font-size:20px;display:block}
-.nav-hidden{position:fixed;left:-9999px;top:-9999px;opacity:0;height:0;width:0;overflow:hidden}
+.navbtn{flex:1;text-align:center;text-decoration:none;font-weight:700;
+  border-radius:12px;padding:8px 6px;border:1px solid var(--line);
+  background:#fff;color:#334155;display:flex;flex-direction:column;align-items:center}
+.navbtn .ico{font-size:20px;line-height:1}
+.navbtn.active{background:var(--blue);color:#fff;border-color:var(--blue);
+  box-shadow:0 6px 16px rgba(46,128,240,.25)}
 
 /* slide (avant/arrière) */
 @keyframes slideInLeft{from{opacity:.25;transform:translateX(18px)}to{opacity:1;transform:none}}
 @keyframes slideInRight{from{opacity:.25;transform:translateX(-18px)}to{opacity:1;transform:none}}
 .appwrap{animation-duration:.22s;animation-fill-mode:both}
-.appwrap.forward{animation-name:slideInLeft}
-.appwrap.back{animation-name:slideInRight}
+body[data-dir="forward"] .appwrap{animation-name:slideInLeft}
+body[data-dir="back"]    .appwrap{animation-name:slideInRight}
 </style>
+
+<script>
+(function(){
+  // petite logique pour direction de slide avec des <a data-nav>
+  const LS="ophta_nav_dir";
+  document.addEventListener("click",(e)=>{
+    const a=e.target.closest("a[data-nav]");
+    const b=e.target.closest("[data-back]");
+    if(a){
+      const to=a.getAttribute("data-code")||"";
+      const cur=new URLSearchParams(location.search).get("p")||"add";
+      if(to && to!==cur){ try{ sessionStorage.setItem(LS,"forward"); }catch(_){ } }
+    }
+    if(b){ try{ sessionStorage.setItem(LS,"back"); }catch(_){ } }
+  }, true);
+  try{
+    const dir=sessionStorage.getItem(LS)||"";
+    if(dir){ document.body.setAttribute("data-dir",dir); sessionStorage.removeItem(LS); }
+  }catch(_){}
+})();
+</script>
         """,
         unsafe_allow_html=True,
     )
@@ -87,7 +107,8 @@ sb = supa()
 def auth_user():
     """Retourne {'id','email'} si connecté, sinon None."""
     u = st.session_state.get("user")
-    if u: return u
+    if u:
+        return u
     try:
         got = sb.auth.get_user()
         if got and got.user:
@@ -115,7 +136,7 @@ def auth_login_ui():
 def auth_logout():
     try: sb.auth.sign_out()
     except Exception: pass
-    for k in ("user",): st.session_state.pop(k, None)
+    st.session_state.pop("user", None)
     st.rerun()
 
 # ────────────────────────── HELPERS
@@ -123,32 +144,31 @@ def _slug(text: str) -> str:
     text = unicodedata.normalize("NFKD", text or "").encode("ascii","ignore").decode("ascii")
     return re.sub(r"[^A-Za-z0-9._-]+", "_", text).strip("_")
 
-def clean_filename(text: str) -> str:
-    text = unicodedata.normalize("NFKD", text or "").encode("ascii","ignore").decode("ascii")
-    return re.sub(r"[^A-Za-z0-9._-]+", "_", text).strip("_")
+def _signed_url(key: str, days=365) -> str:
+    try:
+        r = sb.storage.from_(BUCKET).create_signed_url(key, 60*60*24*days)
+        return r.get("signedURL") or r.get("signed_url") or ""
+    except Exception:
+        return ""
 
 def upload_many(files, base_name: str, owner_uid: str):
     out = []
     if not files:
         return out
-    safe = clean_filename(base_name)
-    bucket = st.secrets.get("SUPABASE_BUCKET", "Ophtadossier")
-    uid = owner_uid or "anon"
-
+    safe = _slug(base_name)
+    uid  = owner_uid or "anon"
     for i, f in enumerate(files):
         try:
             raw = f.read()
             ext = (f.name.split(".")[-1] or "jpg").lower()
             key = f"public/{uid}/{uuid.uuid4().hex[:6]}_{safe}_{i+1}.{ext}"
             try:
-                sb.storage.from_(bucket).upload(key, raw, {"contentType": f.type or "image/jpeg"})
+                sb.storage.from_(BUCKET).upload(key, raw, {"contentType": f.type or "image/jpeg"})
             except Exception:
-                try: sb.storage.from_(bucket).remove([key])
+                try: sb.storage.from_(BUCKET).remove([key])
                 except Exception: pass
-                sb.storage.from_(bucket).upload(key, raw, {"contentType": f.type or "image/jpeg"})
-            # URL signée
-            signed = sb.storage.from_(bucket).create_signed_url(key, 60*60*24*365)
-            url = signed.get("signedURL") or signed.get("signed_url") or ""
+                sb.storage.from_(BUCKET).upload(key, raw, {"contentType": f.type or "image/jpeg"})
+            url = _signed_url(key)
             out.append({"key": key, "url": url})
         except Exception as e:
             st.error(f"Erreur upload {getattr(f,'name','(fichier)')} : {e}")
@@ -209,7 +229,7 @@ def delete_event(owner: str, eid: str):
     st.cache_data.clear()
     sb.table("events").delete().eq("owner", owner).eq("id", eid).execute()
 
-# ────────────────────────── NAVIGATION (sans nouveaux onglets)
+# ────────────────────────── NAVIGATION (ancres HTML – même onglet)
 PAGES = [("add","➕","Ajouter"), ("list","🔎","Patients"),
          ("agenda","📆","Agenda"), ("export","📤","Export")]
 
@@ -219,19 +239,20 @@ def _idx(code: str) -> int:
     return 0
 
 def nav_current() -> str:
+    q = st.query_params.get("p", None)
+    if q: st.session_state["page"] = q
     return st.session_state.get("page","add")
 
 def nav_go(to_code: str):
     cur = nav_current()
     st.session_state["page"] = to_code
     st.session_state["nav_dir"] = "forward" if _idx(to_code) >= _idx(cur) else "back"
-    st.experimental_set_query_params(p=to_code)
+    st.query_params.update({"p": to_code})
     st.rerun()
 
 def render_back(page_key: str):
     if page_key != "add":
-        if st.button("← Retour"):
-            nav_go("add")
+        st.markdown('<div class="topbar"><a class="backbtn" data-back href="?p=add">← Retour</a></div>', unsafe_allow_html=True)
 
 def page_wrapper_start():
     css = st.session_state.get("nav_dir","")
@@ -240,42 +261,16 @@ def page_wrapper_start():
 def page_wrapper_end():
     st.markdown('</div>', unsafe_allow_html=True)
 
-def render_nav(active: str, pos: str = "bottom"):
-    # Barre HTML fixe
-    st.markdown(
-        f"""
-<div class="navbar {'top' if pos=='top' else 'bottom'}">
-  <div class="navwrap">
-    <a class="navbtn {'active' if active=='add' else ''}"    data-to="add"><span class="ico">➕</span>Ajouter</a>
-    <a class="navbtn {'active' if active=='list' else ''}"   data-to="list"><span class="ico">🔎</span>Patients</a>
-    <a class="navbtn {'active' if active=='agenda' else ''}" data-to="agenda"><span class="ico">📆</span>Agenda</a>
-    <a class="navbtn {'active' if active=='export' else ''}" data-to="export"><span class="ico">📤</span>Export</a>
-  </div>
-</div>
-<script>
-(function(){
-  const clickProxy = (id)=>{ const wrap = document.getElementById(id); if(wrap){ const b = wrap.querySelector('button'); if(b){ b.click(); } } };
-  document.querySelectorAll('.navbar .navbtn').forEach(btn=>{
-    btn.addEventListener('click', ()=>{
-      const to = btn.getAttribute('data-to');
-      if(to==='add')    clickProxy('w_nav_add');
-      if(to==='list')   clickProxy('w_nav_list');
-      if(to==='agenda') clickProxy('w_nav_agenda');
-      if(to==='export') clickProxy('w_nav_export');
-    });
-  });
-})();
-</script>
-        """,
-        unsafe_allow_html=True,
-    )
-    # Boutons Streamlit invisibles pour déclencher nav_go côté Python
-    st.markdown('<div class="nav-hidden">', unsafe_allow_html=True)
-    st.markdown('<div id="w_nav_add">', unsafe_allow_html=True);    st.button(" ", key="__nav_go_add",    on_click=lambda: nav_go("add"));    st.markdown("</div>", unsafe_allow_html=True)
-    st.markdown('<div id="w_nav_list">', unsafe_allow_html=True);   st.button(" ", key="__nav_go_list",   on_click=lambda: nav_go("list"));   st.markdown("</div>", unsafe_allow_html=True)
-    st.markdown('<div id="w_nav_agenda">', unsafe_allow_html=True); st.button(" ", key="__nav_go_agenda", on_click=lambda: nav_go("agenda")); st.markdown("</div>", unsafe_allow_html=True)
-    st.markdown('<div id="w_nav_export">', unsafe_allow_html=True); st.button(" ", key="__nav_go_export", on_click=lambda: nav_go("export")); st.markdown("</div>", unsafe_allow_html=True)
-    st.markdown('</div>', unsafe_allow_html=True)
+def render_nav(active: str):
+    html = ['<nav class="navbar"><div class="navwrap">']
+    for code, ico, label in PAGES:
+        act = 'active' if code==active else ''
+        html.append(
+            f'<a class="navbtn {act}" data-nav data-code="{code}" href="?p={code}">'
+            f'<span class="ico">{ico}</span>{label}</a>'
+        )
+    html.append('</div></nav>')
+    st.markdown("\\n".join(html), unsafe_allow_html=True)
 
 # ────────────────────────── PAGES
 def page_add(owner: str):
@@ -532,7 +527,7 @@ def page_export(owner: str):
 -- Tables avec colonne owner (uuid)
 create table if not exists public.patients(
   id text primary key,
-  owner uuid,  -- rempli par l'app
+  owner uuid,
   nom text, telephone text, pathologie text, note text,
   date_consult date, prochain_rdv date, niveau text, tags text,
   created_at timestamptz default now()
@@ -558,7 +553,7 @@ alter table public.patients       enable row level security;
 alter table public.consultations  enable row level security;
 alter table public.events         enable row level security;
 
--- Policies (création via DO $$ pour éviter l'erreur "if not exists")
+-- Policies via DO $$ (évite "if not exists")
 DO $$
 BEGIN
   IF NOT EXISTS (
@@ -582,12 +577,11 @@ BEGIN
       FOR ALL USING (auth.uid() = owner) WITH CHECK (auth.uid() = owner);
   END IF;
 END $$;
-
--- (Storage policies à créer dans Storage → votre bucket)
-    </details>
+        </details>
         """,
         unsafe_allow_html=True,
     )
+
 # ========= ROUTER =========
 u = auth_user()
 if not u:
