@@ -588,21 +588,24 @@ END $$;
 # ========= ROUTER =========
 u = auth_user()
 if not u:
-auth_login_ui()
-st.stop()
+    auth_login_ui()
+    st.stop()
 
-
-top_l, top_r = st.columns([3,1])
-with top_l:
-st.caption(f"Connecté : {u['email']}")
-with top_r:
-if st.button("Se déconnecter"):
-auth_logout()
+# barre supérieure (email + logout)
+col_left, col_right = st.columns([3, 1])
+with col_left:
+    st.caption(f"Connecté : {u['email']}")
+with col_right:
+    if st.button("Se déconnecter"):
+        auth_logout()
 
 PAGE = nav_current()
+
+# wrapper pour l’animation slide + bouton retour
 page_wrapper_start()
 render_back(PAGE)
 
+# routing des pages
 if PAGE == "add":
     page_add(u["id"])
 elif PAGE == "list":
@@ -614,5 +617,6 @@ elif PAGE == "export":
 else:
     page_add(u["id"])
 
+# fin du wrapper + barre de navigation iOS
 page_wrapper_end()
 render_nav(PAGE)
