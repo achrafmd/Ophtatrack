@@ -17,81 +17,60 @@ sb = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 def configure_page():
     st.set_page_config(page_title=APP_TITLE, layout="wide")
-    st.markdown(
-        """
+   st.markdown(
+    """
 <style>
 :root{
-  --blue:#2E80F0;           /* bleu médical */
-  --blue-600:#1E62C9;
-  --bg:#F6FAFF;
-  --card:#FFFFFF;
-  --glass:rgba(255,255,255,.82);
-  --line:#E6EDF8;
-  --text:#0F172A;
+  --blue:#2E80F0; --blue-600:#1E62C9;
+  --bg:#F6FAFF; --card:#FFFFFF; --glass:rgba(255,255,255,.82);
+  --line:#E6EDF8; --text:#0F172A;
 }
 html,body{background:var(--bg);color:var(--text);overflow-x:hidden;}
 header, footer, [data-testid="stStatusWidget"], [data-testid="stToolbar"]{display:none!important;}
 section.main>div{padding-top:.5rem!important;padding-bottom:6rem!important;}
-*,input,textarea{font-size:16px!important;}
+*,input,textarea{font-size:16px!important}
 
-.stButton>button{
-  background:var(--blue);color:#fff;border:none;border-radius:12px;
-  padding:12px 16px;font-weight:700;
-  box-shadow:0 6px 18px rgba(46,128,240,.20);transition:transform .08s ease-in;
-}
+.stButton>button{background:var(--blue);color:#fff;border:none;border-radius:12px;
+  padding:12px 16px;font-weight:700;box-shadow:0 6px 18px rgba(46,128,240,.20);
+  transition:transform .08s}
 .stButton>button:hover{background:var(--blue-600)}
 .stButton>button:active{transform:scale(.98)}
 
-/* Inputs / selects */
 .stTextInput input,.stTextArea textarea,.stDateInput input,
 .stSelectbox [role="combobox"], .stMultiSelect [role="combobox"]{
   background:#fff!important;border:1px solid var(--line)!important;
   border-radius:12px!important;padding:12px 12px!important;
 }
 
-/* Cards */
-.card{
-  background:var(--card);border:1px solid var(--line);
-  border-radius:14px;padding:14px;margin:10px 0;
-  box-shadow:0 2px 6px rgba(0,0,0,.04);
-}
-
-/* Galerie */
+.card{background:var(--card);border:1px solid var(--line);
+  border-radius:14px;padding:14px;margin:10px 0;box-shadow:0 2px 6px rgba(0,0,0,.04)}
 .photo-grid img{border-radius:8px}
 
-/* Topbar + bouton retour */
 .topbar{position:sticky;top:0;z-index:999;background:var(--bg);padding:6px 4px 2px}
-.backbtn{
-  display:inline-flex;align-items:center;gap:6px;padding:8px 10px;
+.backbtn{display:inline-flex;align-items:center;gap:6px;padding:8px 10px;
   background:#fff;border:1px solid var(--line);border-radius:10px;
-  text-decoration:none;color:#0f172a;font-weight:700;
-}
+  text-decoration:none;color:#0f172a;font-weight:700}
 
-/* Bottom nav (verre) */
-.navbar{
-  position:fixed;left:0;right:0;bottom:0;z-index:1000;
+.navbar{position:fixed;left:0;right:0;bottom:0;z-index:1000;
   backdrop-filter:blur(10px);background:var(--glass);
-  border-top:1px solid var(--line);
-  display:flex;justify-content:space-around;padding:8px 6px;
-}
-.navbtn{
-  flex:1;text-align:center;text-decoration:none!important;color:#334155!important;
-  font-weight:700;border-radius:12px;padding:8px 6px;
-}
+  border-top:1px solid var(--line);display:flex;justify-content:space-around;
+  padding:8px 6px}
+.navbtn{flex:1;text-align:center;text-decoration:none!important;color:#334155!important;
+  font-weight:700;border-radius:12px;padding:8px 6px}
 .navbtn[aria-current="page"]{color:#fff!important;background:var(--blue);
-  box-shadow:0 6px 16px rgba(46,128,240,.25);}
+  box-shadow:0 6px 16px rgba(46,128,240,.25)}
 .navbtn .ico{font-size:20px;display:block}
 
-/* Slide animations */
+/* Slides */
 @keyframes slideInLeft{from{opacity:.3;transform:translateX(18px)}to{opacity:1;transform:none}}
 @keyframes slideInRight{from{opacity:.3;transform:translateX(-18px)}to{opacity:1;transform:none}}
 .appwrap{animation-duration:.22s;animation-fill-mode:both}
-body[data-slide="forward"] .appwrap{animation-name:slideInLeft}
-body[data-slide="back"] .appwrap{animation-name:slideInRight}
+body[data-dir="forward"] .appwrap{animation-name:slideInLeft}
+body[data-dir="back"] .appwrap{animation-name:slideInRight}
 </style>
-        """,
-        unsafe_allow_html=True,
-    )
+""",
+    unsafe_allow_html=True,
+)
 
 configure_page()
 
@@ -180,105 +159,56 @@ def delete_event(eid: str):
     st.cache_data.clear()
     sb.table("events").delete().eq("id", eid).execute()
 
-# ========= NAVIGATION (SPA, pas de nouvel onglet) =========
-TABS = [("add","➕","Ajouter"),("list","🔎","Patients"),("agenda","📆","Agenda"),("export","📤","Export")]
+# ========= NAVIGATION (sans JS parent, pas de nouvel onglet) =========
+TABS = [("add","➕","Ajouter"),("list","🔎","Patients"),
+        ("agenda","📆","Agenda"),("export","📤","Export")]
 ORDER = {c:i for i,(c,_,_) in enumerate(TABS)}
 
-def nav_set(page: str, slide: str="forward"):
-    st.session_state.setdefault("history", [])
-    cur = st.session_state.get("page","add")
-    if page != cur:
-        st.session_state["history"].append(cur)
-    st.session_state["page"] = page
-    st.session_state["slide"] = slide
-
-def nav_back():
-    hist = st.session_state.get("history", [])
-    if hist:
-        prev = hist.pop()
-        nav_set(prev, "back")
-    else:
-        nav_set("add", "back")
-
 def current_page() -> str:
-    return st.session_state.get("page","add")
+    # lit les query params (?p=..., ?dir=..., ?prev=...)
+    qp = st.query_params
+    p   = (qp.get("p") or ["add"])[0] if isinstance(qp.get("p"), list) else (qp.get("p") or "add")
+    d   = (qp.get("dir") or ["forward"])[0] if isinstance(qp.get("dir"), list) else (qp.get("dir") or "forward")
+    prev= (qp.get("prev") or ["add"])[0] if isinstance(qp.get("prev"), list) else (qp.get("prev") or "add")
+    st.session_state["page"]  = p
+    st.session_state["slide"] = d
+    st.session_state["prev"]  = prev
+    return p
+
+def goto(page_key: str, dir_: str="forward"):
+    st.session_state["prev"]  = st.session_state.get("page","add")
+    st.session_state["page"]  = page_key
+    st.session_state["slide"] = dir_
+    # met à jour l’URL -> rerun même onglet
+    st.query_params.update({"p": page_key, "dir": dir_, "prev": st.session_state["prev"]})
 
 def page_wrapper_start():
-    slide = st.session_state.get("slide","forward")
-    st.markdown(
-        f"""<div class="appwrap">
-<script>
-document.body.setAttribute('data-slide','{slide}');
-setTimeout(()=>document.body.setAttribute('data-slide',''),260);
-</script>
-""",
-        unsafe_allow_html=True,
-    )
+    dir_ = st.session_state.get("slide","forward")
+    st.markdown(f"""<div class="appwrap">
+<script>document.body.setAttribute('data-dir','{dir_}');</script>""",
+                unsafe_allow_html=True)
 
 def page_wrapper_end():
     st.markdown("</div>", unsafe_allow_html=True)
 
 def render_back(page: str):
     if page != "add":
-        st.markdown('<div class="topbar"><a href="#" class="backbtn" id="btn-back">⬅︎ Retour</a></div>', unsafe_allow_html=True)
-        # bouton invisible pour déclencher Python
-        st.button(" ", key="__go_back__", on_click=lambda: nav_back())
+        prev = st.session_state.get("prev","add")
+        # lien direct vers la page précédente, même onglet, direction = back
         st.markdown(
-            """
-<script>
-document.getElementById("btn-back")?.addEventListener("click", (e)=>{
-  e.preventDefault(); window.parent.postMessage({type:"nav", to:"back"}, "*");
-});
-</script>
-            """,
-            unsafe_allow_html=True,
+            f'<div class="topbar"><a class="backbtn" href="?p={prev}&dir=back&prev={page}">⬅︎ Retour</a></div>',
+            unsafe_allow_html=True
         )
 
 def render_nav(active: str):
+    # vrais liens, même onglet (pas de target)
     html = ['<nav class="navbar">']
     for code, ico, label in TABS:
         cur = 'aria-current="page"' if code==active else ""
-        html.append(f'<a href="#" class="navbtn" data-to="{code}" {cur}><span class="ico">{ico}</span>{label}</a>')
+        html.append(f'<a class="navbtn" {cur} href="?p={code}&dir=forward&prev={active}">'
+                    f'<span class="ico">{ico}</span>{label}</a>')
     html.append("</nav>")
     st.markdown("".join(html), unsafe_allow_html=True)
-
-    # 4 boutons invisibles reliés au JS (pas de nouvel onglet)
-    c1,c2,c3,c4 = st.columns(4)
-    with c1: st.button(" ", key="__go_add__", on_click=lambda: nav_set("add","forward"))
-    with c2: st.button(" ", key="__go_list__", on_click=lambda: nav_set("list","forward"))
-    with c3: st.button(" ", key="__go_agenda__", on_click=lambda: nav_set("agenda","forward"))
-    with c4: st.button(" ", key="__go_export__", on_click=lambda: nav_set("export","forward"))
-
-    st.markdown(
-        """
-<script>
-(function(){
-  const map={add:"__go_add__",list:"__go_list__",agenda:"__go_agenda__",export:"__go_export__",back:"__go_back__"};
-  function clickKey(k){
-    const btn=[...window.parent.document.querySelectorAll("button,div[role=button]")].find(b=>b.getAttribute("data-baseweb")==="button" && (b.innerText.trim()===" "||b.id===k));
-    const fallback = window.parent.document.querySelector('button[kind][disabled="false"]');
-    (btn||fallback)?.click();
-  }
-  // nav bar
-  document.querySelectorAll(".navbtn").forEach(a=>{
-    a.addEventListener("click",(e)=>{e.preventDefault();
-      window.parent.postMessage({type:"nav", to:a.dataset.to},"*");
-    })
-  });
-  // back + autres depuis postMessage
-  window.addEventListener("message",(e)=>{
-    if(!e?.data||e.data.type!=="nav")return;
-    const k = map[e.data.to]; if(!k)return;
-    // set direction
-    const dir = (e.data.to==="back") ? "back" : "forward";
-    document.body.setAttribute("data-slide", dir);
-    clickKey(k);
-  });
-})();
-</script>
-        """,
-        unsafe_allow_html=True,
-    )
 
 # ========= PAGES =========
 def page_add():
@@ -556,11 +486,10 @@ CREATE TABLE IF NOT EXISTS public.events(
         """,
         unsafe_allow_html=True,
     )
-# ============ ROUTER (avec slide + back) ============
+# ========= ROUTER =========
 PAGE = current_page()
-
-page_wrapper_start()     # ouvre le conteneur animé
-render_back(PAGE)        # bouton Retour si != "add"
+page_wrapper_start()
+render_back(PAGE)
 
 if PAGE == "add":
     page_add()
@@ -573,5 +502,5 @@ elif PAGE == "export":
 else:
     page_add()
 
-page_wrapper_end()       # ferme + joue l’animation
-render_nav(PAGE)         # barre d’onglets en bas
+page_wrapper_end()
+render_nav(PAGE)
