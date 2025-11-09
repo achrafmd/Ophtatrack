@@ -146,24 +146,37 @@ def storage_signed_url(key: str, days=365) -> str:
     except Exception:
         return ""
 
-def upload_many(files, base_name: str, owner: str):
+def upload_many(files, base_name: str):
     out = []
-    if not files: return out
-    safe = _clean(base_name)
+    if not files:
+        return out
+    safe = clean_filename(base_name)
+    # UID courant (si non connecté on met 'anon' pour éviter les erreurs)
+    try:
+        uid = (sb.auth.get_user().user.id) or "anon"
+    except Exception:
+        uid = "anon"
+
     for i, f in enumerate(files):
         try:
             raw = f.read()
             ext = (f.name.split(".")[-1] or "jpg").lower()
-            key = f"{STORAGE_PREF}/{owner}/{safe}_{i+1}.{ext}"
+            # <-- chemin "public/<uid>/..." (important pour RLS Storage)
+            key = f"public/{uid}/{uuid.uuid4().hex[:6]}_{safe}_{i+1}.{ext}"
+            # upload (upsert manuel si nécessaire)
             try:
-                sb.storage.from_(BUCKET).upload(key, raw, {"contentType": f.type or "image/jpeg"})
+                sb.storage.from_(st.secrets["SUPABASE_BUCKET"]).upload(
+                    key, raw, {"contentType": f.type or "image/jpeg"}
+                )
             except Exception:
-                try: sb.storage.from_(BUCKET).remove([key])
+                try: sb.storage.from_(st.secrets["SUPABASE_BUCKET"]).remove([key])
                 except Exception: pass
-                sb.storage.from_(BUCKET).upload(key, raw, {"contentType": f.type or "image/jpeg"})
-            out.append({"key": key, "url": storage_signed_url(key)})
+                sb.storage.from_(st.secrets["SUPABASE_BUCKET"]).upload(
+                    key, raw, {"contentType": f.type or "image/jpeg"}
+                )
+            out.append({"key": key, "url": sb_signed_url(key)})
         except Exception as e:
-            st.error(f"Upload {getattr(f,'name','(fichier)')} : {e}")
+            st.error(f"Erreur upload {getattr(f,'name','(fichier)')} : {e}")
     return out
 
 def delete_photo(key: str) -> bool:
