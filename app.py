@@ -46,17 +46,28 @@ section.main>div{padding-top:.5rem!important;padding-bottom:6.8rem!important}
   background:#fff;border:1px solid var(--line);border-radius:10px;
   text-decoration:none;color:#0f172a;font-weight:700}
 
-/* bottom nav iOS (100% HTML – pas de st.button ici) */
-.navbar{position:fixed;left:0;right:0;bottom:0;z-index:1000;backdrop-filter:blur(10px);
-  background:var(--glass);border-top:1px solid var(--line);padding:8px 8px}
+<!-- bottom nav iOS (version <a.navbtn>) -->
+<style>
+.navbar{
+  position:fixed;left:0;right:0;bottom:0;
+  z-index:2000; /* au-dessus du bouton "Manage app" */
+  backdrop-filter:blur(10px);
+  background:var(--glass);
+  border-top:1px solid var(--line);
+  padding:8px 6px
+}
 .navwrap{display:flex;gap:8px}
-.navbtn{flex:1;text-align:center;text-decoration:none;font-weight:700;
-  border-radius:12px;padding:8px 6px;border:1px solid var(--line);
-  background:#fff;color:#334155;display:flex;flex-direction:column;align-items:center}
-.navbtn .ico{font-size:20px;line-height:1}
-.navbtn.active{background:var(--blue);color:#fff;border-color:var(--blue);
-  box-shadow:0 6px 16px rgba(46,128,240,.25)}
-
+.navbtn{
+  flex:1; display:block; text-align:center; text-decoration:none!important;
+  background:#fff; color:#334155!important; border:1px solid var(--line);
+  border-radius:12px; padding:8px 6px; font-weight:700
+}
+.navbtn.active{
+  background:var(--blue); color:#fff!important; border-color:var(--blue);
+  box-shadow:0 6px 16px rgba(46,128,240,.25)
+}
+.navbtn .ico{display:block; font-size:20px; line-height:1.2}
+</style>
 /* slide (avant/arrière) */
 @keyframes slideInLeft{from{opacity:.25;transform:translateX(18px)}to{opacity:1;transform:none}}
 @keyframes slideInRight{from{opacity:.25;transform:translateX(-18px)}to{opacity:1;transform:none}}
@@ -273,7 +284,7 @@ def page_wrapper_end():
     st.markdown('</div>', unsafe_allow_html=True)
 
 def render_nav(active: str):
-    # construit les boutons sans "\n" visibles et sans ouvrir de nouvel onglet
+    # construit des liens ancrés qui ne déclenchent pas de nouvel onglet
     items = []
     for code, ico, label in PAGES:
         direction = "forward" if _idx(code) >= _idx(active) else "back"
@@ -281,8 +292,10 @@ def render_nav(active: str):
         items.append(
             f"""
 <a class="navbtn {act}" data-nav data-code="{code}" href="#"
-   onclick="event.preventDefault(); try{{ sessionStorage.setItem('ophta_nav_dir','{direction}'); }}catch(_){{
-            }} location.search='?p={code}';">
+   onclick="event.preventDefault();
+            try{{ sessionStorage.setItem('ophta_nav_dir','{direction}'); }}catch(_){{
+            }}
+            location.search='?p={code}';">
    <span class="ico">{ico}</span>{label}
 </a>
 """
