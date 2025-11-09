@@ -541,20 +541,19 @@ CREATE TABLE IF NOT EXISTS public.events(
         """,
         unsafe_allow_html=True,
     )
-===================== ROUTER =====================
+# ===================== ROUTER =====================
 
 PAGE = current_page()
-if PAGE == “add”:
-page_add()
-elif PAGE == “list”:
-page_list()
-elif PAGE == “agenda”:
-page_agenda()
-elif PAGE == “export”:
-page_export()
+if PAGE == "add":
+    page_add()
+elif PAGE == "list":
+    page_list()
+elif PAGE == "agenda":
+    page_agenda()
+elif PAGE == "export":
+    page_export()
 else:
-page_add()
+    page_add()
 
-Barre de navigation (toujours à la fin)
-
+# Barre de navigation (toujours à la fin)
 render_nav(PAGE)
