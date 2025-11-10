@@ -3,7 +3,7 @@ from __future__ import annotations
 import streamlit as st
 import pandas as pd
 from datetime import date, timedelta
-import unicodedata, re, uuid
+import unicodedata, re, uuid, json
 
 # ────────────────────────── UI / THEME
 def _configure_page():
@@ -61,10 +61,26 @@ section.main>div{padding-top:.5rem!important;padding-bottom:6.8rem!important}
 .appwrap{animation-duration:.22s;animation-fill-mode:both}
 .appwrap.forward{animation-name:slideInLeft}
 .appwrap.back{animation-name:slideInRight}
+/* Fallback si la direction est posée sur <body data-dir="..."> */
+body[data-dir="forward"] .appwrap{animation-name:slideInLeft}
+body[data-dir="back"]    .appwrap{animation-name:slideInRight}
 </style>
         """,
         unsafe_allow_html=True,
     )
+    # Applique la direction mémorisée (au cas où) dès le chargement
+    st.markdown(
+        """
+<script>
+try{
+  const d = sessionStorage.getItem('ophta_dir');
+  if(d){ document.body.setAttribute('data-dir', d); sessionStorage.removeItem('ophta_dir'); }
+}catch(e){}
+</script>
+        """,
+        unsafe_allow_html=True,
+    )
+
 _configure_page()
 
 # ────────────────────────── SUPABASE
@@ -217,12 +233,42 @@ def sync_page_from_query():
         st.session_state["page"] = target
 
 def render_nav(active: str):
-    def item(code, ico, label):
-        cls = "navbtn active" if code==active else "navbtn"
-        return f'<a class="{cls}" href="?p={code}"><span class="ico">{ico}</span>{label}</a>'
-    html = '<div class="navbar"><div class="navwrap">' + \
-           "".join(item(c,i,l) for c,i,l in PAGES) + \
-           '</div></div>'
+    # HTML des 4 boutons (href="#" bloqué) + JS pour gérer direction + URL sans ouvrir de nouvel onglet
+    items = []
+    for code, ico, label in PAGES:
+        cls = "navbtn active" if code == active else "navbtn"
+        items.append(
+            f'<a class="{cls}" href="#" data-code="{code}" onclick="return false;">'
+            f'<span class="ico">{ico}</span>{label}</a>'
+        )
+    order_map = {code: i for i, (code, _, _) in enumerate(PAGES)}
+    html = (
+        '<div class="navbar"><div class="navwrap">'
+        + "".join(items) +
+        '</div></div>'
+        '<script>'
+        f'const OPHTA_ORDER = {json.dumps(order_map)};'
+        f'const OPHTA_CUR = {json.dumps(active)};'
+        'document.querySelectorAll(".navbar a.navbtn").forEach(a => {'
+        '  a.addEventListener("click", (ev) => {'
+        '    ev.preventDefault();'
+        '    const to = a.dataset.code;'
+        '    const dir = (OPHTA_ORDER[to] >= OPHTA_ORDER[OPHTA_CUR]) ? "forward" : "back";'
+        '    try { sessionStorage.setItem("ophta_dir", dir); } catch(e) {}'
+        '    const url = new URL(window.location.href);'
+        '    url.searchParams.set("p", to);'
+        '    history.replaceState({}, "", url);'
+        '    window.location.reload();'
+        '  });'
+        '});'
+        'window.addEventListener("load", () => {'
+        '  try {'
+        '    const d = sessionStorage.getItem("ophta_dir") || "";'
+        '    if (d) { document.body.setAttribute("data-dir", d); sessionStorage.removeItem("ophta_dir"); }'
+        '  } catch(e) {}'
+        '});'
+        '</script>'
+    )
     st.markdown(html, unsafe_allow_html=True)
 
 def render_back(page_key: str):
@@ -232,11 +278,14 @@ def render_back(page_key: str):
             st.experimental_set_query_params(p="add")
             st.session_state["nav_dir"] = "back"
             st.session_state["page"] = "add"
+            # hint d’animation côté client
+            st.markdown("<script>try{sessionStorage.setItem('ophta_dir','back');}catch(e){}</script>", unsafe_allow_html=True)
             st.rerun()
 
 def page_wrapper_start():
     css = st.session_state.get("nav_dir","")
     st.markdown(f'<div class="appwrap {css}">', unsafe_allow_html=True)
+
 def page_wrapper_end():
     st.markdown('</div>', unsafe_allow_html=True)
 
