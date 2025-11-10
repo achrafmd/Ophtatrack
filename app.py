@@ -51,31 +51,41 @@ section.main>div{padding-top:.5rem!important;padding-bottom:2rem!important}
 .topnav [data-testid="stRadio"] [role="radiogroup"]{
   display:flex; gap:8px; align-items:center; justify-content:space-between;
 }
-/* chaque option prend la même largeur */
+/* TOP NAV (segmented control) */
+.topnav{
+  position:sticky;top:0;z-index:100;
+  padding:8px 6px 10px;margin:0 0 8px 0;
+  backdrop-filter:saturate(180%) blur(8px);
+  background:linear-gradient(to bottom, rgba(246,250,255,.95), rgba(246,250,255,.80));
+  border-bottom:1px solid var(--line);
+}
+.topnav .wrap{max-width:980px;margin:0 auto}
+.topnav [data-testid="stRadio"] [role="radiogroup"]{
+  display:flex; gap:8px; align-items:center; justify-content:space-between;
+}
 .topnav [data-testid="stRadio"] [role="radiogroup"] > label{flex:1}
 
-/* masque le “rond” natif du radio (structure Streamlit) */
+/* masque le “rond” du radio (structure robuste) */
 .topnav [data-testid="stRadio"] [role="radiogroup"] > label > div:first-child{
   display:none !important;
 }
 
-/* style du “pill” */
+/* pastille */
 .topnav [data-testid="stRadio"] [role="radiogroup"] > label > div:last-child{
   background:#fff; border:1px solid var(--line); border-radius:12px;
   padding:10px 14px; text-align:center; font-weight:700;
-  box-shadow:0 1px 2px rgba(0,0,0,.04); transition:all .12s ease;
-  color:#0f172a;
+  box-shadow:0 1px 2px rgba(0,0,0,.04); transition:all .12s ease; color:#0f172a;
 }
 
-/* état hover */
-.topnav [data-testid="stRadio"] [role="radiogroup"] > label:hover > div:last-child{
-  border-color:#cbd5e1; transform:translateY(-1px);
-}
-
-/* état actif (option cochée) */
-.topnav [data-testid="stRadio"] [role="radiogroup"] > label > div[aria-checked="true"] + div{
+/* actif */
+.topnav [data-testid="stRadio"] [role="radiogroup"] > label[data-checked="true"] > div:last-child{
   color:#fff; background:var(--blue); border-color:var(--blue);
   box-shadow:0 8px 18px rgba(46,128,240,.28);
+}
+
+/* hover */
+.topnav [data-testid="stRadio"] [role="radiogroup"] > label:hover > div:last-child{
+  border-color:#cbd5e1; transform:translateY(-1px);
 }
 
 @media (max-width: 430px){
@@ -250,8 +260,13 @@ def render_top_nav():
     idx = _idx(st.session_state.get("page","add"))
     st.markdown('<div class="topnav"><div class="wrap">', unsafe_allow_html=True)
     choice = st.radio(
-        label="", options=labels, index=idx, horizontal=True, key="__topnav"
-    )
+    "Navigation",                     # évite label vide
+    options=labels,
+    index=idx,
+    horizontal=True,
+    key="__topnav",
+    label_visibility="collapsed",     # masque le libellé → plus de warning
+)
     st.markdown('</div></div>', unsafe_allow_html=True)
     chosen_code = PAGES[labels.index(choice)][0]
     if chosen_code != st.session_state.get("page","add"):
