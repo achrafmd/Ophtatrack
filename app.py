@@ -282,7 +282,7 @@ def page_add(owner: str):
             "prochain_rdv": str(d_rdv) if d_rdv else None, "photos": media,
         })
         st.success(f"✅ Patient {nom} ajouté.")
-nav_go("list")
+        nav_go("list")
 
 def page_list(owner: str):
     st.subheader("🔎 Rechercher / Filtrer / Modifier")
