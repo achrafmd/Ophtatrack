@@ -37,9 +37,7 @@ section.main>div{padding-top:.5rem!important;padding-bottom:2rem!important}
 }
 .stRadio [role="radiogroup"]{gap:10px;flex-wrap:wrap}
 .card{background:var(--card);border:1px solid var(--line);border-radius:14px;
-  padding:14px;margin:10px 0;box-shadow:0 2px 6px rgba(0,0,0,.04)}
-
-/* TOP NAV (segmented control) */
+  padding:14px;margin:10px 0;box-shadow:0 2px 6px rgba(0,0,0,./* TOP NAV (segmented control) – version qui marche avec Streamlit */
 .topnav{
   position:sticky;top:0;z-index:100;
   padding:8px 6px 10px;margin:0 0 8px 0;
@@ -48,27 +46,43 @@ section.main>div{padding-top:.5rem!important;padding-bottom:2rem!important}
   border-bottom:1px solid var(--line);
 }
 .topnav .wrap{max-width:980px;margin:0 auto}
-.topnav .stRadio [role="radiogroup"]{
-  display:flex;gap:8px;justify-content:space-between;align-items:center
+
+/* conteneur horizontal */
+.topnav [data-testid="stRadio"] [role="radiogroup"]{
+  display:flex; gap:8px; align-items:center; justify-content:space-between;
 }
-.topnav .stRadio label{flex:1}
-.topnav .stRadio input{display:none} /* cache les bullets */
-.topnav .stRadio label div:nth-child(2){
-  background:#fff;border:1px solid var(--line);border-radius:12px;
-  padding:10px 14px;text-align:center;font-weight:700;
-  box-shadow:0 1px 2px rgba(0,0,0,.04);
-  transition:all .12s ease;
+/* chaque option prend la même largeur */
+.topnav [data-testid="stRadio"] [role="radiogroup"] > label{flex:1}
+
+/* masque le “rond” natif du radio (structure Streamlit) */
+.topnav [data-testid="stRadio"] [role="radiogroup"] > label > div:first-child{
+  display:none !important;
 }
-.topnav .stRadio label:hover div:nth-child(2){
-  border-color:#cbd5e1; transform:translateY(-1px)
+
+/* style du “pill” */
+.topnav [data-testid="stRadio"] [role="radiogroup"] > label > div:last-child{
+  background:#fff; border:1px solid var(--line); border-radius:12px;
+  padding:10px 14px; text-align:center; font-weight:700;
+  box-shadow:0 1px 2px rgba(0,0,0,.04); transition:all .12s ease;
+  color:#0f172a;
 }
-.topnav .stRadio input:checked + div{
-  color:#fff;background:var(--blue);border-color:var(--blue);
-  box-shadow:0 8px 18px rgba(46,128,240,.28)
+
+/* état hover */
+.topnav [data-testid="stRadio"] [role="radiogroup"] > label:hover > div:last-child{
+  border-color:#cbd5e1; transform:translateY(-1px);
 }
+
+/* état actif (option cochée) */
+.topnav [data-testid="stRadio"] [role="radiogroup"] > label > div[aria-checked="true"] + div{
+  color:#fff; background:var(--blue); border-color:var(--blue);
+  box-shadow:0 8px 18px rgba(46,128,240,.28);
+}
+
 @media (max-width: 430px){
-  .topnav .stRadio label div:nth-child(2){padding:8px 10px;font-size:14px}
-  .topnav .stRadio [role="radiogroup"]{gap:6px}
+  .topnav [data-testid="stRadio"] [role="radiogroup"]{gap:6px}
+  .topnav [data-testid="stRadio"] [role="radiogroup"] > label > div:last-child{
+    padding:8px 10px; font-size:14px;
+  }
 }
 </style>
 """,
