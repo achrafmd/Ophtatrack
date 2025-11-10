@@ -208,6 +208,12 @@ def _idx(code: str) -> int:
 def nav_current() -> str:
     return st.session_state.get("page","add")
 
+def nav_go(to_code: str):
+    cur = st.session_state.get("page", "add")
+    st.session_state["nav_dir"] = "forward" if _idx(to_code) >= _idx(cur) else "back"
+    st.session_state["page"] = to_code
+    st.rerun()
+    
 def sync_page_from_query():
     qp = st.experimental_get_query_params()
     target = qp.get("p", [None])[0]
@@ -217,23 +223,20 @@ def sync_page_from_query():
         st.session_state["page"] = target
 
 def render_nav(active: str):
-    # Pur HTML (pas de <script>) — clic = navigation même onglet vers ?p=...
-    def item(code, ico, label):
-        cls = "navbtn active" if code==active else "navbtn"
-        return f'<a class="{cls}" href="?p={code}"><span class="ico">{ico}</span>{label}</a>'
-    html = '<div class="navbar"><div class="navwrap">' + \
-           "".join(item(c,i,l) for c,i,l in PAGES) + \
-           '</div></div>'
-    st.markdown(html, unsafe_allow_html=True)
-
+    # conteneur fixe en bas (le CSS existe déjà)
+    st.markdown('<div class="navbar"><div id="ophta-nav">', unsafe_allow_html=True)
+    cols = st.columns(4)
+    for i, (code, ico, label) in enumerate(PAGES):
+        with cols[i]:
+            if st.button(f"{ico}  {label}", key=f"nav_{code}"):
+                nav_go(code)
+    st.markdown('</div></div>', unsafe_allow_html=True)
+    
 def render_back(page_key: str):
     if page_key != "add":
         st.markdown('<div class="topbar"><span class="backbtn">← Retour</span></div>', unsafe_allow_html=True)
         if st.button("← Retour", key="__back"):
-            st.experimental_set_query_params(p="add")
-            st.session_state["nav_dir"] = "back"
-            st.session_state["page"] = "add"
-            st.rerun()
+            nav_go("add")
 
 def page_wrapper_start():
     css = st.session_state.get("nav_dir","")
@@ -279,10 +282,7 @@ def page_add(owner: str):
             "prochain_rdv": str(d_rdv) if d_rdv else None, "photos": media,
         })
         st.success(f"✅ Patient {nom} ajouté.")
-        st.experimental_set_query_params(p="list")
-        st.session_state["nav_dir"] = "forward"
-        st.session_state["page"] = "list"
-        st.rerun()
+nav_go("list")
 
 def page_list(owner: str):
     st.subheader("🔎 Rechercher / Filtrer / Modifier")
@@ -510,10 +510,8 @@ if not u:
     st.stop()
 
 # Synchroniser l’URL -> l’état (aucun nouvel onglet)
-sync_page_from_query()
 st.session_state.setdefault("page", "add")
 st.session_state.setdefault("nav_dir", "")
-st.experimental_set_query_params(p=st.session_state["page"])
 
 # Barre du haut
 c1, c2 = st.columns([3, 1])
