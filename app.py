@@ -9,7 +9,7 @@ import unicodedata, re, uuid
 def _configure_page():
     st.set_page_config(page_title="OphtaDossier", layout="wide")
     st.markdown(
-        """
+       """
 <style>
 :root{
   --blue:#2E80F0; --blue-600:#1E62C9;
@@ -18,7 +18,7 @@ def _configure_page():
 }
 html,body{background:var(--bg);color:var(--text);overflow-x:hidden}
 header, footer, [data-testid="stStatusWidget"], [data-testid="stToolbar"]{display:none!important}
-section.main>div{padding-top:.5rem!important;padding-bottom:6.8rem!important}
+section.main>div{padding-top:.5rem!important;padding-bottom:2rem!important}
 *,input,textarea{font-size:16px!important}
 
 /* buttons */
@@ -38,31 +38,15 @@ section.main>div{padding-top:.5rem!important;padding-bottom:6.8rem!important}
 .card{background:var(--card);border:1px solid var(--line);border-radius:14px;
   padding:14px;margin:10px 0;box-shadow:0 2px 6px rgba(0,0,0,.04)}
 
-/* back bar */
-.topbar{position:sticky;top:0;z-index:999;background:var(--bg);padding:6px 4px 4px}
-.backbtn{display:inline-flex;align-items:center;gap:6px;padding:8px 10px;
-  background:#fff;border:1px solid var(--line);border-radius:10px;
-  text-decoration:none;color:#0f172a;font-weight:700}
-
-/* bottom fixed nav (HTML links) */
-.navbar{position:fixed;left:0;right:0;bottom:0;z-index:1000;backdrop-filter:blur(10px);
-  background:var(--glass);border-top:1px solid var(--line);padding:8px 10px}
-.navwrap{display:flex;gap:8px}
-.navbtn{flex:1;display:flex;align-items:center;justify-content:center;gap:8px;
-  background:#fff;border:1px solid var(--line);border-radius:12px;
-  padding:10px 8px;font-weight:700;color:#334155;text-decoration:none}
-.navbtn.active{background:var(--blue);color:#fff;border-color:var(--blue);
-  box-shadow:0 6px 16px rgba(46,128,240,.25)}
-.navbtn .ico{font-size:18px}
-
-/* slide */
-@keyframes slideInLeft{from{opacity:.25;transform:translateX(18px)}to{opacity:1;transform:none}}
-@keyframes slideInRight{from{opacity:.25;transform:translateX(-18px)}to{opacity:1;transform:none}}
-.appwrap{animation-duration:.22s;animation-fill-mode:both}
-.appwrap.forward{animation-name:slideInLeft}
-.appwrap.back{animation-name:slideInRight}
+/* TOP NAV (radio en mode segments) */
+.topnav{position:sticky;top:0;z-index:100;background:var(--bg);padding:6px 4px 10px;margin-bottom:6px;
+  border-bottom:1px solid var(--line)}
+.topnav .stRadio [role="radiogroup"]{justify-content:space-between}
+.topnav label{font-weight:700}
+.topnav [data-baseweb="radio"]{background:#fff;border:1px solid var(--line);border-radius:12px;padding:8px 12px}
+.topnav input:checked + div{color:#fff;background:var(--blue);border-color:var(--blue);box-shadow:0 6px 16px rgba(46,128,240,.25)}
 </style>
-        """,
+""",
         unsafe_allow_html=True,
     )
 _configure_page()
@@ -222,15 +206,24 @@ def sync_page_from_query():
         st.session_state["nav_dir"] = "forward" if _idx(target) >= _idx(cur) else "back"
         st.session_state["page"] = target
 
-def render_nav(active: str):
-    # conteneur fixe en bas (le CSS existe déjà)
-    st.markdown('<div class="navbar"><div id="ophta-nav">', unsafe_allow_html=True)
-    cols = st.columns(4)
-    for i, (code, ico, label) in enumerate(PAGES):
-        with cols[i]:
-            if st.button(f"{ico}  {label}", key=f"nav_{code}"):
-                nav_go(code)
-    st.markdown('</div></div>', unsafe_allow_html=True)
+def render_top_nav():
+    # options affichées avec icônes
+    labels = [f"{ico} {label}" for _, ico, label in PAGES]
+    # index selon la page courante
+    idx = _idx(st.session_state.get("page","add"))
+    with st.container():
+        st.markdown('<div class="topnav">', unsafe_allow_html=True)
+        choice = st.radio("",
+                          labels,
+                          index=idx,
+                          horizontal=True,
+                          key="__topnav")
+        st.markdown('</div>', unsafe_allow_html=True)
+    # trouver le code choisi
+    chosen_idx = labels.index(choice)
+    chosen_code = PAGES[chosen_idx][0]
+    if chosen_code != st.session_state.get("page","add"):
+        nav_go(chosen_code)
     
 def render_back(page_key: str):
     if page_key != "add":
@@ -520,6 +513,9 @@ with c1:
 with c2:
     if st.button("Se déconnecter"):
         auth_logout()
+        
+# Menu en haut
+render_top_nav()
 
 # Page courante + animation
 PAGE = st.session_state["page"]
@@ -539,4 +535,4 @@ else:
     page_add(u["id"])
 
 st.markdown('</div>', unsafe_allow_html=True)
-render_nav(PAGE)
+
