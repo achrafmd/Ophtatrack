@@ -18,6 +18,7 @@ def _configure_page():
 }
 html,body{background:var(--bg);color:var(--text);overflow-x:hidden}
 header, footer, [data-testid="stStatusWidget"], [data-testid="stToolbar"]{display:none!important}
+/* plus besoin de grande marge basse */
 section.main>div{padding-top:.5rem!important;padding-bottom:2rem!important}
 *,input,textarea{font-size:16px!important}
 
@@ -38,13 +39,37 @@ section.main>div{padding-top:.5rem!important;padding-bottom:2rem!important}
 .card{background:var(--card);border:1px solid var(--line);border-radius:14px;
   padding:14px;margin:10px 0;box-shadow:0 2px 6px rgba(0,0,0,.04)}
 
-/* TOP NAV (radio en mode segments) */
-.topnav{position:sticky;top:0;z-index:100;background:var(--bg);padding:6px 4px 10px;margin-bottom:6px;
-  border-bottom:1px solid var(--line)}
-.topnav .stRadio [role="radiogroup"]{justify-content:space-between}
-.topnav label{font-weight:700}
-.topnav [data-baseweb="radio"]{background:#fff;border:1px solid var(--line);border-radius:12px;padding:8px 12px}
-.topnav input:checked + div{color:#fff;background:var(--blue);border-color:var(--blue);box-shadow:0 6px 16px rgba(46,128,240,.25)}
+/* TOP NAV (segmented control) */
+.topnav{
+  position:sticky;top:0;z-index:100;
+  padding:8px 6px 10px;margin:0 0 8px 0;
+  backdrop-filter:saturate(180%) blur(8px);
+  background:linear-gradient(to bottom, rgba(246,250,255,.95), rgba(246,250,255,.80));
+  border-bottom:1px solid var(--line);
+}
+.topnav .wrap{max-width:980px;margin:0 auto}
+.topnav .stRadio [role="radiogroup"]{
+  display:flex;gap:8px;justify-content:space-between;align-items:center
+}
+.topnav .stRadio label{flex:1}
+.topnav .stRadio input{display:none} /* cache les bullets */
+.topnav .stRadio label div:nth-child(2){
+  background:#fff;border:1px solid var(--line);border-radius:12px;
+  padding:10px 14px;text-align:center;font-weight:700;
+  box-shadow:0 1px 2px rgba(0,0,0,.04);
+  transition:all .12s ease;
+}
+.topnav .stRadio label:hover div:nth-child(2){
+  border-color:#cbd5e1; transform:translateY(-1px)
+}
+.topnav .stRadio input:checked + div{
+  color:#fff;background:var(--blue);border-color:var(--blue);
+  box-shadow:0 8px 18px rgba(46,128,240,.28)
+}
+@media (max-width: 430px){
+  .topnav .stRadio label div:nth-child(2){padding:8px 10px;font-size:14px}
+  .topnav .stRadio [role="radiogroup"]{gap:6px}
+}
 </style>
 """,
         unsafe_allow_html=True,
@@ -207,23 +232,16 @@ def sync_page_from_query():
         st.session_state["page"] = target
 
 def render_top_nav():
-    # options affichées avec icônes
     labels = [f"{ico} {label}" for _, ico, label in PAGES]
-    # index selon la page courante
     idx = _idx(st.session_state.get("page","add"))
-    with st.container():
-        st.markdown('<div class="topnav">', unsafe_allow_html=True)
-        choice = st.radio("",
-                          labels,
-                          index=idx,
-                          horizontal=True,
-                          key="__topnav")
-        st.markdown('</div>', unsafe_allow_html=True)
-    # trouver le code choisi
-    chosen_idx = labels.index(choice)
-    chosen_code = PAGES[chosen_idx][0]
+    st.markdown('<div class="topnav"><div class="wrap">', unsafe_allow_html=True)
+    choice = st.radio(
+        label="", options=labels, index=idx, horizontal=True, key="__topnav"
+    )
+    st.markdown('</div></div>', unsafe_allow_html=True)
+    chosen_code = PAGES[labels.index(choice)][0]
     if chosen_code != st.session_state.get("page","add"):
-        nav_go(chosen_code)
+        nav_go(chosen_code)  # pas de nouvel onglet, navigation interne
     
 def render_back(page_key: str):
     if page_key != "add":
