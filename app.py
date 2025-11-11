@@ -42,50 +42,25 @@ section.main>div{padding-top:.5rem!important;padding-bottom:2rem!important}
 .card{background:var(--card);border:1px solid var(--line);border-radius:14px;
   padding:14px;margin:10px 0;box-shadow:0 2px 6px rgba(0,0,0,.04)}
 
-//* ===== TOP NAV (segmented control) — FIX cross-version ===== */
+///* ===== TOP NAV HTML (aucun radio, aucun rond) ===== */
 .topnav{position:sticky;top:0;z-index:100;padding:8px 6px 10px;margin:0 0 8px 0;
   backdrop-filter:saturate(180%) blur(8px);
   background:linear-gradient(to bottom, rgba(246,250,255,.95), rgba(246,250,255,.80));
   border-bottom:1px solid var(--line)}
 .topnav .wrap{max-width:980px;margin:0 auto}
-
-/* ligne horizontale */
-.topnav [data-testid="stRadio"] [role="radiogroup"]{
-  display:flex; gap:8px; align-items:center; justify-content:space-between;
-}
-.topnav [data-testid="stRadio"] [role="radiogroup"] > label{flex:1}
-
-/* 1) Cacher l’icône “radio” (toutes variantes) */
-.topnav [role="radiogroup"] label [role="radio"]{display:none!important;}
-.topnav [role="radiogroup"] label > input[type="radio"]{display:none!important;}
-.topnav [role="radiogroup"] label svg{display:none!important;} /* fallback */
-
-/* 2) La pastille: on cible le dernier DIV du label */
-.topnav [role="radiogroup"] label > div:last-child{
-  display:block;
-  background:#fff; border:1px solid var(--line); border-radius:12px;
-  padding:10px 14px; text-align:center; font-weight:700; color:#0f172a;
-  box-shadow:0 1px 2px rgba(0,0,0,.04); transition:all .12s ease;
-}
-
-/* 3) État actif — couvrir toutes les versions */
-.topnav [role="radiogroup"] label[data-checked="true"] > div:last-child,
-.topnav [role="radiogroup"] label:has([aria-checked="true"]) > div:last-child,
-.topnav [role="radiogroup"] label:has(input:checked) > div:last-child{
+.topnav .seg{display:flex;gap:8px;align-items:center;justify-content:space-between}
+.topnav .seg a{
+  flex:1; display:block; text-align:center; text-decoration:none;
+  background:#fff; color:#0f172a; border:1px solid var(--line); border-radius:12px;
+  padding:10px 14px; font-weight:700; box-shadow:0 1px 2px rgba(0,0,0,.04);
+  transition:transform .12s ease,border-color .12s ease}
+.topnav .seg a:hover{border-color:#cbd5e1; transform:translateY(-1px)}
+.topnav .seg a.active{
   color:#fff; background:var(--blue); border-color:var(--blue);
-  box-shadow:0 8px 18px rgba(46,128,240,.28);
-}
-
-/* 4) Hover */
-.topnav [role="radiogroup"] label:hover > div:last-child{
-  border-color:#cbd5e1; transform:translateY(-1px);
-}
-
+  box-shadow:0 8px 18px rgba(46,128,240,.28)}
 @media (max-width:430px){
-  .topnav [role="radiogroup"]{gap:6px}
-  .topnav [role="radiogroup"] label > div:last-child{
-    padding:8px 10px; font-size:14px;
-  }
+  .topnav .seg{gap:6px}
+  .topnav .seg a{padding:8px 10px; font-size:14px}
 }
 </style>
 """, unsafe_allow_html=True)
@@ -246,21 +221,17 @@ def sync_page_from_query():
         st.session_state["page"] = target
 
 def render_top_nav():
-    labels = [f"{ico} {label}" for _, ico, label in PAGES]
-    idx = _idx(st.session_state.get("page","add"))
-    st.markdown('<div class="topnav"><div class="wrap">', unsafe_allow_html=True)
-    choice = st.radio(
-        "Navigation",                 # label non vide -> plus de warnings
-        options=labels,
-        index=idx,
-        horizontal=True,
-        key="__topnav",
-        label_visibility="collapsed"  # masqué visuellement
-    )
-    st.markdown('</div></div>', unsafe_allow_html=True)
-    chosen_code = PAGES[labels.index(choice)][0]
-    if chosen_code != st.session_state.get("page","add"):
-        nav_go(chosen_code)
+    cur = st.session_state.get("page", "add")
+    items = []
+    for code, ico, label in PAGES:
+        cls = "active" if code == cur else ""
+        items.append(f'<a class="{cls}" href="?p={code}">{ico} {label}</a>')
+    html = f'''
+    <div class="topnav"><div class="wrap">
+      <div class="seg">{''.join(items)}</div>
+    </div></div>
+    '''
+    st.markdown(html, unsafe_allow_html=True)
         
 def render_back(page_key: str):
     if page_key != "add":
@@ -542,6 +513,8 @@ if not u:
 # Synchroniser l’URL -> l’état (aucun nouvel onglet)
 st.session_state.setdefault("page", "add")
 st.session_state.setdefault("nav_dir", "")
+
+sync_page_from_query()
 
 # Barre du haut
 c1, c2 = st.columns([3, 1])
