@@ -225,7 +225,7 @@ def render_top_nav():
     items = []
     for code, ico, label in PAGES:
         cls = "active" if code == cur else ""
-        items.append(f'<a class="{cls}" href="?p={code}">{ico} {label}</a>')
+        items.append(f'<a class="{cls}" href="?p={code}" target="_self">{ico} {label}</a>')
     html = f'''
     <div class="topnav"><div class="wrap">
       <div class="seg">{''.join(items)}</div>
