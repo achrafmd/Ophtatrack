@@ -9,7 +9,7 @@ import unicodedata, re, uuid
 def _configure_page():
     st.set_page_config(page_title="OphtaDossier", layout="wide")
     st.markdown(
-       """
+        """
 <style>
 :root{
   --blue:#2E80F0; --blue-600:#1E62C9;
@@ -18,14 +18,15 @@ def _configure_page():
 }
 html,body{background:var(--bg);color:var(--text);overflow-x:hidden}
 header, footer, [data-testid="stStatusWidget"], [data-testid="stToolbar"]{display:none!important}
-/* plus besoin de grande marge basse */
 section.main>div{padding-top:.5rem!important;padding-bottom:2rem!important}
 *,input,textarea{font-size:16px!important}
 
 /* buttons */
-.stButton>button{background:var(--blue);color:#fff;border:none;border-radius:12px;
+.stButton>button{
+  background:var(--blue);color:#fff;border:none;border-radius:12px;
   padding:12px 16px;font-weight:700;box-shadow:0 6px 18px rgba(46,128,240,.20);
-  transition:transform .08s}
+  transition:transform .08s
+}
 .stButton>button:hover{background:var(--blue-600)}
 .stButton>button:active{transform:scale(.98)}
 
@@ -36,8 +37,12 @@ section.main>div{padding-top:.5rem!important;padding-bottom:2rem!important}
   padding:12px 12px!important
 }
 .stRadio [role="radiogroup"]{gap:10px;flex-wrap:wrap}
-.card{background:var(--card);border:1px solid var(--line);border-radius:14px;
-  padding:14px;margin:10px 0;box-shadow:0 2px 6px rgba(0,0,0,./* TOP NAV (segmented control) – version qui marche avec Streamlit */
+.card{
+  background:var(--card);border:1px solid var(--line);border-radius:14px;
+  padding:14px;margin:10px 0;box-shadow:0 2px 6px rgba(0,0,0,.04);
+}
+
+/* ===== TOP NAV (segmented control) ===== */
 .topnav{
   position:sticky;top:0;z-index:100;
   padding:8px 6px 10px;margin:0 0 8px 0;
@@ -51,21 +56,9 @@ section.main>div{padding-top:.5rem!important;padding-bottom:2rem!important}
 .topnav [data-testid="stRadio"] [role="radiogroup"]{
   display:flex; gap:8px; align-items:center; justify-content:space-between;
 }
-/* TOP NAV (segmented control) */
-.topnav{
-  position:sticky;top:0;z-index:100;
-  padding:8px 6px 10px;margin:0 0 8px 0;
-  backdrop-filter:saturate(180%) blur(8px);
-  background:linear-gradient(to bottom, rgba(246,250,255,.95), rgba(246,250,255,.80));
-  border-bottom:1px solid var(--line);
-}
-.topnav .wrap{max-width:980px;margin:0 auto}
-.topnav [data-testid="stRadio"] [role="radiogroup"]{
-  display:flex; gap:8px; align-items:center; justify-content:space-between;
-}
 .topnav [data-testid="stRadio"] [role="radiogroup"] > label{flex:1}
 
-/* masque le “rond” du radio (structure robuste) */
+/* masque le “rond” natif */
 .topnav [data-testid="stRadio"] [role="radiogroup"] > label > div:first-child{
   display:none !important;
 }
@@ -73,8 +66,8 @@ section.main>div{padding-top:.5rem!important;padding-bottom:2rem!important}
 /* pastille */
 .topnav [data-testid="stRadio"] [role="radiogroup"] > label > div:last-child{
   background:#fff; border:1px solid var(--line); border-radius:12px;
-  padding:10px 14px; text-align:center; font-weight:700;
-  box-shadow:0 1px 2px rgba(0,0,0,.04); transition:all .12s ease; color:#0f172a;
+  padding:10px 14px; text-align:center; font-weight:700; color:#0f172a;
+  box-shadow:0 1px 2px rgba(0,0,0,.04); transition:all .12s ease;
 }
 
 /* actif */
@@ -88,17 +81,16 @@ section.main>div{padding-top:.5rem!important;padding-bottom:2rem!important}
   border-color:#cbd5e1; transform:translateY(-1px);
 }
 
-@media (max-width: 430px){
+@media (max-width:430px){
   .topnav [data-testid="stRadio"] [role="radiogroup"]{gap:6px}
   .topnav [data-testid="stRadio"] [role="radiogroup"] > label > div:last-child{
     padding:8px 10px; font-size:14px;
   }
 }
 </style>
-""",
+        """,
         unsafe_allow_html=True,
     )
-_configure_page()
 
 # ────────────────────────── SUPABASE
 from supabase import create_client, Client
@@ -260,18 +252,18 @@ def render_top_nav():
     idx = _idx(st.session_state.get("page","add"))
     st.markdown('<div class="topnav"><div class="wrap">', unsafe_allow_html=True)
     choice = st.radio(
-    "Navigation",                     # évite label vide
-    options=labels,
-    index=idx,
-    horizontal=True,
-    key="__topnav",
-    label_visibility="collapsed",     # masque le libellé → plus de warning
-)
+        "Navigation",                 # label non vide -> plus de warnings
+        options=labels,
+        index=idx,
+        horizontal=True,
+        key="__topnav",
+        label_visibility="collapsed"  # masqué visuellement
+    )
     st.markdown('</div></div>', unsafe_allow_html=True)
     chosen_code = PAGES[labels.index(choice)][0]
     if chosen_code != st.session_state.get("page","add"):
-        nav_go(chosen_code)  # pas de nouvel onglet, navigation interne
-    
+        nav_go(chosen_code)
+        
 def render_back(page_key: str):
     if page_key != "add":
         st.markdown('<div class="topbar"><span class="backbtn">← Retour</span></div>', unsafe_allow_html=True)
@@ -567,7 +559,7 @@ render_top_nav()
 # Page courante + animation
 PAGE = st.session_state["page"]
 st.markdown(f'<div class="appwrap {st.session_state["nav_dir"]}">', unsafe_allow_html=True)
-render_back(PAGE)
+# render_back(PAGE)
 
 # Routing
 if PAGE == "add":
