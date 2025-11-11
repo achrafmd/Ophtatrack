@@ -91,7 +91,7 @@ section.main>div{padding-top:.5rem!important;padding-bottom:2rem!important}
         """,
         unsafe_allow_html=True,
     )
-
+_configure_page()
 # ────────────────────────── SUPABASE
 from supabase import create_client, Client
 
