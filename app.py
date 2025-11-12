@@ -24,6 +24,38 @@ html,body{background:var(--bg);color:var(--text);overflow-x:hidden}
 [data-testid="stToolbar"]{display:none!important}
 section.main>div{padding-top:.5rem!important;padding-bottom:2rem!important}
 
+/* 🌙 iOS Dark Mode fix — forcer les champs en mode clair */
+:root{ color-scheme: light; }  /* dit au navigateur: pas de thème sombre natif */
+input, textarea, select { color-scheme: light; }
+
+/* En dark mode, on force nos couleurs pour le texte, le caret et l'autofill */
+@media (prefers-color-scheme: dark){
+  .stTextInput input, .stTextArea textarea, .stDateInput input,
+  .stSelectbox [role="combobox"], .stMultiSelect [role="combobox"]{
+    background:#fff !important;
+    color:#0F172A !important;
+    -webkit-text-fill-color:#0F172A !important; /* iOS */
+    caret-color:#0F172A !important;
+    border:1px solid var(--line) !important;
+  }
+
+  /* placeholders visibles */
+  .stTextInput input::placeholder,
+  .stTextArea textarea::placeholder{
+    color:#9AA4B2 !important; opacity:1 !important;
+  }
+
+  /* iOS autofill (fond jaune/vert) → texte lisible + fond blanc */
+  input:-webkit-autofill,
+  textarea:-webkit-autofill,
+  select:-webkit-autofill{
+    -webkit-text-fill-color:#0F172A !important;
+    box-shadow:0 0 0 1000px #fff inset !important;
+    -webkit-box-shadow:0 0 0 1000px #fff inset !important;
+    transition:background-color 600000s 0s, color 600000s 0s !important;
+  }
+}
+
 /* Typo/UI de base */
 *,input,textarea{font-size:16px!important}
 .stButton>button{
